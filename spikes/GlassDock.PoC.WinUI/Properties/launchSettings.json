@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "GlassDock.PoC.WinUI (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "GlassDock.PoC.WinUI (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

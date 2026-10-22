@@ -1,0 +1,24 @@
+# .NET build output
+**/bin/
+**/obj/
+**/TestResults/
+*.user
+*.suo
+
+# IDE state
+.vs/
+.idea/
+
+# Local SDK and development-only state
+.tools/
+.local/
+artifacts/local/
+
+# Per-user app data generated during manual runs
+*.user.config
+*.log
+*.dmp
+
+# OS files
+Thumbs.db
+Desktop.ini

@@ -1,0 +1,7 @@
+"Candidate","Edge","ObservedWindowDpi","Topmost","CenterHitDock","TransparentCornerHitsDock","AlphaHoleQueryPass","Method"
+"Wpf","Bottom","240","True","True","False","True","WindowFromPoint ownership query; not a real click"
+"Wpf","Left","240","True","True","False","True","WindowFromPoint ownership query; not a real click"
+"Wpf","Right","240","True","True","False","True","WindowFromPoint ownership query; not a real click"
+"WinUI","Bottom","240","True","True","True","False","WindowFromPoint ownership query; not a real click"
+"WinUI","Left","240","True","True","True","False","WindowFromPoint ownership query; not a real click"
+"WinUI","Right","240","True","True","True","False","WindowFromPoint ownership query; not a real click"

@@ -1,0 +1,5 @@
+"Candidate","ItemCount","IconSizeDip","EngineTimestampSamples","PeakEngineUtilizationPercent","DedicatedMemoryTimestampSamples","PeakDedicatedMiB","SharedMemoryTimestampSamples","PeakSharedMiB","SourceCsv"
+"WinUI","8","58","5","0","5","31.58","5","2.8","WinUI-8items-58dip-20261022T093540Z.csv"
+"WinUI","24","58","5","0","5","36.21","5","4","WinUI-24items-58dip-20261022T093746Z.csv"
+"Wpf","8","58","5","0","5","27.66","5","3.19","Wpf-8items-58dip-20261022T093511Z.csv"
+"Wpf","24","58","5","0","5","61.17","5","4.44","Wpf-24items-58dip-20261022T093612Z.csv"

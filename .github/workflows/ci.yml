@@ -1,0 +1,23 @@
+name: Windows CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.402
+      - name: Build
+        shell: pwsh
+        run: ./scripts/build.ps1
+      - name: Test
+        shell: pwsh
+        run: ./scripts/test.ps1 -NoRestore
