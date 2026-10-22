@@ -23,7 +23,7 @@
 | Core 测试 | `.\scripts\test.ps1 -NoRestore` | 退出码 0；11/11 通过 |
 | 窗口探测 | `.\scripts\verify-poc-windows.ps1` | 退出码 0；两候选在 Bottom/Left/Right 各运行一次；透明角结果见下节 |
 | 本地托管 CI | `.github/workflows/ci.yml` | workflow 配置存在；没有远端 repository，未运行 GitHub Actions |
-| D 盘 clean clone | 本地 Git 源克隆后独立 restore/build/test | 结果和 commit 记录见第 6 节 |
+| D 盘 clean clone | `git clone` 本地源提交 `62c35de85256698f06b1f08359a43ac0f3acfb81`；随后在克隆中运行 `build.ps1` / `test.ps1 -NoRestore` | build 退出码 0，8 项目、0 警告/错误；test 退出码 0，11/11 通过 |
 
 远端仓库、发布、安装器和应用部署均不属于 M0 本地范围。
 
@@ -71,8 +71,9 @@ CPU/内存测量为每秒一次的静态 idle 样本。表中均值和峰值来�
 
 ## 6. 构建、克隆与许可证
 
-- 在 D 盘仓库运行锁定 restore、Release build 和 MSTest；随后使用同一 D 盘本地 Git 仓库克隆到忽略目录 `.local\clean-clone`。将本地 SDK复制到克隆的 `.tools\dotnet`，由脚本把 NuGet、HTTP、CLI 和临时目录重定向到克隆自己的 `.local`；干净克隆不能复用原工作树的 `bin/obj`。
-- 在干净克隆中执行 `.\scripts\build.ps1` 与 `.\scripts\test.ps1 -NoRestore`，退出码和结果由最终验证补写；若缺少包则先由 locked restore 从 NuGet 获取至 D 盘缓存。验证后检查 `git ls-files` 不含 `.local`、`.tools`、`bin/obj` 或原始截屏。
+- 源仓库 Release 构建 `build.ps1` 退出码 0（8 项目、0 警告/错误），Core 测试 `test.ps1 -NoRestore` 退出码 0（11/11）。之后从源提交 `62c35de85256698f06b1f08359a43ac0f3acfb81` 克隆到 D 盘忽略目录 `.local\clean-clone`。克隆有自己的 `.tools\dotnet` 和全新 `.local` 包缓存，不复用原工作树 `bin/obj`。
+- 干净克隆内运行 `.\scripts\build.ps1` 退出码 0（锁定 restore 成功；8 项目、0 警告/错误）；运行 `.\scripts\test.ps1 -NoRestore` 退出码 0（11/11）。源仓库与克隆仓库均无远端；克隆验证后 `git status` 干净。源仓库 87 个跟踪文件中没有 `.local`、`.tools`、`bin/obj` 或原始全屏证据路径。
+- clean clone 验证之后只把上述实测退出码和源 commit 写入本报告；没有改动项目源码、PoC、构建脚本或测试，因此构建验证对象与最终提交的可执行源码一致。
 - `.github/workflows/ci.yml` 的 Windows workflow 配置了相同 build/test 步骤，但没有配置远程、没有推送、没有声明托管 CI 通过。
 - `docs/third-party-licenses.md` 是依赖元数据清单，不是许可意见。根 `LICENSE` 是明确未授予许可的占位文件；项目许可需权利人选择。未选之前不可发布或分发。
 
