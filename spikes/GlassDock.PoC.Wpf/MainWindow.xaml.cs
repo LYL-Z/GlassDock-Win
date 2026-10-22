@@ -20,7 +20,10 @@ public partial class MainWindow : System.Windows.Window, IDockWindowHost
 {
     private const int WmNcHitTest = 0x0084;
     private const int HtTransparent = -1;
+    private const ulong M0SendInputMarker = 0x53444F43;
     private readonly string _settingsPath = Path.Combine(GetStateRoot(), "wpf-poc-settings.json");
+    private readonly string _m0InputTracePath = Path.Combine(GetStateRoot(), "m0-input-events.jsonl");
+    private readonly string _m0ScenarioMarkerPath = Path.Combine(GetStateRoot(), "m0-current-scenario.txt");
     private readonly WinForms.NotifyIcon _trayIcon;
     private DockEdge _edge;
     private HwndSource? _source;
@@ -31,6 +34,13 @@ public partial class MainWindow : System.Windows.Window, IDockWindowHost
     public MainWindow()
     {
         InitializeComponent();
+        PreviewMouseLeftButtonDown += (_, e) => TraceM0Input("PointerDown", e.GetPosition(this), "window");
+        PreviewMouseLeftButtonUp += (_, e) => TraceM0Input("PointerUp", e.GetPosition(this), "window");
+        PreviewMouseMove += (_, e) =>
+        {
+            if (e.LeftButton == System.Windows.Input.MouseButtonState.Pressed)
+                TraceM0Input("PointerMoveLeftHeld", e.GetPosition(this), "window");
+        };
         _edge = LoadEdge();
         _itemCount = ReadItemCount();
         _requestedIconSize = ReadIconSize();
@@ -286,8 +296,33 @@ public partial class MainWindow : System.Windows.Window, IDockWindowHost
         if (sender is WpfButton { Tag: DockItem item })
         {
             StatusText.Text = $"Placeholder selected: {item.Label} · action not connected";
-            DockLogger.Info($"Placeholder selected: {item.Id}.");
+            var scenario = File.Exists(_m0ScenarioMarkerPath) ? File.ReadAllText(_m0ScenarioMarkerPath).Trim() : "unmarked";
+            DockLogger.Info($"Placeholder selected: {item.Id}; M0 scenario={scenario}.");
         }
+    }
+
+    private void TraceM0Input(string eventName, System.Windows.Point windowPoint, string itemLabel)
+    {
+        if (!string.Equals(Environment.GetEnvironmentVariable("GLASSDOCK_M0_INPUT_TRACE"), "1", StringComparison.Ordinal))
+            return;
+
+        var screenPoint = PointToScreen(windowPoint);
+        var extraInfo = unchecked((ulong)GetMessageExtraInfo().ToInt64());
+        var entry = new
+        {
+            TimestampUtc = DateTimeOffset.UtcNow,
+            Candidate = "WPF",
+            Edge = _edge.ToString(),
+            Scenario = File.Exists(_m0ScenarioMarkerPath) ? File.ReadAllText(_m0ScenarioMarkerPath).Trim() : "unmarked",
+            Event = eventName,
+            Item = itemLabel,
+            ScreenX = screenPoint.X,
+            ScreenY = screenPoint.Y,
+            ExtraInfo = $"0x{extraInfo:X16}",
+            InputOrigin = extraInfo == M0SendInputMarker ? "SendInput-synthetic" : "unclassified"
+        };
+        Directory.CreateDirectory(Path.GetDirectoryName(_m0InputTracePath)!);
+        File.AppendAllText(_m0InputTracePath, JsonSerializer.Serialize(entry) + Environment.NewLine);
     }
 
     private nint WindowProc(nint hwnd, int message, nint wParam, nint lParam, ref bool handled)
@@ -325,4 +360,7 @@ public partial class MainWindow : System.Windows.Window, IDockWindowHost
 
     [DllImport("user32.dll")]
     private static extern uint GetDpiForWindow(nint hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern nint GetMessageExtraInfo();
 }

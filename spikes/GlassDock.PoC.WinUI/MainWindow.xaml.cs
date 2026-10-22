@@ -20,8 +20,11 @@ public sealed partial class MainWindow : Window, IDockWindowHost
     private const uint SwpNoMove = 0x0002;
     private const uint SwpNoActivate = 0x0010;
     private const uint SwpFrameChanged = 0x0020;
+    private const ulong M0SendInputMarker = 0x53444F43;
     private static readonly nint HwndTopmost = new(-1);
     private readonly string _settingsPath = Path.Combine(GetStateRoot(), "winui-poc-settings.json");
+    private readonly string _m0InputTracePath = Path.Combine(GetStateRoot(), "m0-input-events.jsonl");
+    private readonly string _m0ScenarioMarkerPath = Path.Combine(GetStateRoot(), "m0-current-scenario.txt");
     private readonly nint _hwnd;
     private readonly AppWindow _appWindow;
     private readonly NativeTrayIcon _trayIcon;
@@ -33,6 +36,13 @@ public sealed partial class MainWindow : Window, IDockWindowHost
     public MainWindow()
     {
         InitializeComponent();
+        LayoutRoot.PointerPressed += (_, e) => TraceM0Input("PointerDown", e, "window");
+        LayoutRoot.PointerReleased += (_, e) => TraceM0Input("PointerUp", e, "window");
+        LayoutRoot.PointerMoved += (_, e) =>
+        {
+            if (e.GetCurrentPoint(LayoutRoot).Properties.IsLeftButtonPressed)
+                TraceM0Input("PointerMoveLeftHeld", e, "window");
+        };
         _hwnd = WindowNative.GetWindowHandle(this);
         var windowId = Win32Interop.GetWindowIdFromWindow(_hwnd);
         _appWindow = AppWindow.GetFromWindowId(windowId);
@@ -215,8 +225,37 @@ public sealed partial class MainWindow : Window, IDockWindowHost
         if (sender is Button { Tag: DockItem item })
         {
             StatusText.Text = $"Placeholder selected: {item.Label} · action not connected";
-            DockLogger.Info($"Placeholder selected: {item.Id}.");
+            var scenario = File.Exists(_m0ScenarioMarkerPath) ? File.ReadAllText(_m0ScenarioMarkerPath).Trim() : "unmarked";
+            DockLogger.Info($"Placeholder selected: {item.Id}; M0 scenario={scenario}.");
         }
+    }
+
+    private void TraceM0Input(string eventName, PointerRoutedEventArgs args, string itemLabel)
+    {
+        if (!string.Equals(Environment.GetEnvironmentVariable("GLASSDOCK_M0_INPUT_TRACE"), "1", StringComparison.Ordinal))
+            return;
+
+        var point = args.GetCurrentPoint(LayoutRoot).Position;
+        var rect = new NativeRect();
+        if (!GetWindowRect(_hwnd, out rect))
+            return;
+        var dpiScale = GetDpiForWindow(_hwnd) / 96.0;
+        var extraInfo = unchecked((ulong)GetMessageExtraInfo().ToInt64());
+        var entry = new
+        {
+            TimestampUtc = DateTimeOffset.UtcNow,
+            Candidate = "WinUI 3",
+            Edge = _edge.ToString(),
+            Scenario = File.Exists(_m0ScenarioMarkerPath) ? File.ReadAllText(_m0ScenarioMarkerPath).Trim() : "unmarked",
+            Event = eventName,
+            Item = itemLabel,
+            ScreenX = rect.Left + point.X * dpiScale,
+            ScreenY = rect.Top + point.Y * dpiScale,
+            ExtraInfo = $"0x{extraInfo:X16}",
+            InputOrigin = extraInfo == M0SendInputMarker ? "SendInput-synthetic" : "unclassified"
+        };
+        Directory.CreateDirectory(Path.GetDirectoryName(_m0InputTracePath)!);
+        File.AppendAllText(_m0InputTracePath, JsonSerializer.Serialize(entry) + Environment.NewLine);
     }
 
     private void LayoutRoot_RightTapped(object sender, RightTappedRoutedEventArgs e)
@@ -313,4 +352,19 @@ public sealed partial class MainWindow : Window, IDockWindowHost
 
     [DllImport("user32.dll")]
     private static extern uint GetDpiForWindow(nint hWnd);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool GetWindowRect(nint hWnd, out NativeRect rect);
+
+    [DllImport("user32.dll")]
+    private static extern nint GetMessageExtraInfo();
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeRect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
 }

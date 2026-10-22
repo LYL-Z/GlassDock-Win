@@ -1,35 +1,54 @@
-# M0 技术路线对照
+# M0 技术路线对比与复评
 
-日期：2026-10-22。此文记录 M0 原型观测与可证伪的下一步实验；不是最终框架决定。
+日期：2026-10-22。本文件记录本机可复核的 M0 证据和缺口，不构成最终框架决定。
 
-## 候选路线
+## 当前评估
 
-| 路线 | 窗口、绘制和输入路径 | 初步优点 | 风险和待证伪点 | 当前 M0 观测 |
-|---|---|---|---|---|
-| WinUI 3 + Windows App SDK Composition | WinUI `Window` / `AppWindow`、Composition 渲染、Win32 窗口互操作 | 原生 Windows UI 控件与 Composition API；有官方 Composition 原生互操作入口和性能指引 | 窗口透明像素是否同时成为输入穿透区须实测；App SDK Runtime、打包/部署与版本矩阵要核实；Composition 的存在本身不证明 60/120Hz 流畅 | 两种图标数均能启动并采集 CPU/内存；当前 DPI 下三边置顶；三个边缘的透明圆角查询均命中 Dock 进程，alpha-hole 查询失败。无可用帧时间数据 |
-| WPF + Windows Composition / Win32 互操作 | WPF 无边框透明窗口、DWM 合成；用 HWND 消息对透明区域返回 `HTTRANSPARENT`，可在以后按需互操作 Composition | WPF 窗口和输入处理可以直接通过当前原型探测；现有 .NET/WPF 工具链容易在本机无打包启动 | 透明窗口、DPI 变化、焦点/置顶、桌面合成和动画成本仍需真实帧跟踪；WPF 与额外原生互操作的维护边界需要评估 | 当前 DPI 下三边置顶；三个边缘透明圆角的 `WindowFromPoint` 查询均不归 Dock 进程；同条件资源数据可采集。尚未实测帧时间、跨 DPI、全屏行为和真实底层点击 |
-| 原生 Win32 + DirectComposition + Direct2D 或 Skia | HWND 管理输入和窗口生命周期；DirectComposition 管合成视觉树；Direct2D 或 Skia 绘制 | 窗口样式、命中测试和绘制生命周期可细分控制；可将每个 API 边界单独测量 | 不能预设它更快或自动解决 alpha hit testing；需要自行承担窗口/消息/焦点/DPI/设备丢失、渲染后端、资源释放、测试和发布；Skia 还引入本机二进制与许可证盘点 | 尚无可运行第三路 PoC，当前仅有官方 API 文档分析；不参与本轮实测排名 |
+| 维度 | WPF + Win32 互操作 | WinUI 3 + Windows App SDK | Win32 + DirectComposition/Direct2D |
+|---|---|---|---|
+| 逐像素透明 / 输入穿透 | 在当前 250% 单屏条件下，受控下层窗口实际收到三边透明角单击、双击、从透明区开始的拖动；Dock 内容点击由 Dock 收到 | Bottom/Left/Right 透明角的单击和双击都由 Dock 根窗口收到，下层计数为 0；实测 FAIL | 还没有 PoC；不能声称自动解决透明像素命中 |
+| DWM / DirectComposition | 单例 Windows.Graphics.Capture 捕获到 DWM 合成帧；没有独立 DirectComposition 视觉树对比 | 使用 Composition 体系不等于输入穿透或帧时间正确；没有捕获 WinUI 视觉对照 | 可直接控制 HWND 与合成视觉树，实施复杂度和生命周期责任更高 |
+| 液态玻璃空间 | 当前截图看到背景透射和阴影；没有观察到背景模糊 | 理论上可使用 Windows Composition 效果；本 PoC 无实测结果 | 可选择 Direct2D/DComp 或其他渲染后端；材质、模糊和设备恢复都要自行实现 |
+| 动画性能 / 帧时间 | 只有静态 CPU/内存/GPU 样本；PresentMon ETW 被系统拒绝，没有帧 CSV | 同样缺少真实呈现帧时间 | 未测。更底层不能替代帧跟踪 |
+| 高 DPI / 多显示器 / 动态刷新 | 输入仅在 250% 单屏；无 100/150/200%、跨屏、物理刷新时序验证 | 相同缺口；透明输入失败仍未解决 | 可定义坐标/DPI 策略，但工程实现尚不存在 |
+| 顶层、任务栏、全屏共存 | 既有窗口探测有置顶属性；任务栏、最大化、无边框或独占全屏恢复未测 | 既有窗口探测有置顶属性；系统共存场景未测 | 可控性可能更强，但未实测；不推导成通过 |
+| Windows 11 API 可维护性 | 使用 WPF 和少量 HWND 消息钩子，现阶段代码较小；未来需维护 DPI、DWM、线程与窗口生命周期边界 | 使用 AppWindow、Win32 interop 与 Windows App SDK；需管理运行时/SDK 部署和交互边界 | API 边界最可控，但窗口消息、渲染、DPI、设备丢失、资源生命周期均要自行维护 |
+| 后期架构扩展成本 | 适合继续做短期验证；对复杂合成效果和多屏动画是否合适仍未知 | 保留现有 UI/Composition 生态，但输入穿透失败是阻断项 | 初始成本和验证面最大；只有现有路线暴露实质限制才值得用最小 PoC 验证 |
 
-WinUI 官方原生 Composition 互操作文档说明了 WinUI 与原生 Composition 的集成入口；官方性能文档也把实际布局、渲染和启动成本作为需测问题，而非由框架名称推定。[Composition 原生互操作](https://learn.microsoft.com/en-us/windows/apps/develop/composition/composition-native-interop) · [WinUI 性能建议](https://learn.microsoft.com/en-us/windows/apps/develop/performance/winui-perf)
+## 本轮输入与视觉证据
 
-DirectComposition 将视觉内容组织到视觉树并与 DWM 合成；它不替代 HWND 输入命中测试。原生路线必须将两者分开验证。[DirectComposition 架构与组件](https://learn.microsoft.com/en-us/windows/win32/directcomp/architecture-and-components) · [DirectComposition 基本概念](https://learn.microsoft.com/en-us/windows/win32/directcomp/basic-concepts)
+- 真实事件接收记录位于 D 盘 .local/evidence/m0-gap/input/20261022T104053Z/actual-input-results.csv。输入由 SendInput 合成，但由实际 Win32 窗口过程和候选 Dock 的事件/按钮日志确认最终接收方；不属于物理鼠标测试。
+- WPF 三边透明单击、双击、透明区起始拖动均由下层窗口收到；内容区点击/双击与从内容区发起拖动由 Dock 收到。
+- WinUI 三边透明角单击、双击由 Dock 根窗口收到；下层窗口没有相应消息。WinUI 内容区与拖动场景因图标点未定位而未完成，不能推断。
+- 唯一 DWM 视觉帧是 WPF、浅色、Bottom、58 DIP、250% DPI、240Hz 报告环境。背景通过 Dock 可见且图案仍清晰，观察到阴影，未观察到模糊；深色和 WinUI 未捕获。
+- PresentMon ETW 返回 access denied，没有 frame CSV。CPU/GPU 值是静态 idle 资源样本，不是动画帧率。
+- 输入测试脚本会显示全屏受控背景并注入合成鼠标事件，现已加入 PowerShell 高影响 ShouldProcess 确认；没有用户同意时不能再次执行。
 
-## 同条件原型基线
+## 帧时序测量边界
 
-- 两个可执行 PoC 使用相同的 `GlassDock.Core` 几何、8/24 占位项目和 44/58/72 DIP 尺寸选项；三个边缘均以 8 项、58 DIP 启动并测量窗口位置、置顶样式和中心/透明角落命中。
-- 资源测量为静态 idle 样本。CPU 百分比按整机逻辑处理器数归一化；Working Set 和 Private Bytes 来自进程计数。结果见 [M0 报告](dock-evidence/M0/M0-report.md) 和 [汇总 CSV](dock-evidence/M0/runtime-summary.csv)。
-- 240Hz 模式下采集 8 与 24 项、58/72 DIP；补充 24 项、44 DIP 采样。120Hz 只测 8/24 项、58 DIP 的 CPU/内存。GPU 计数器仅在 240Hz 静态场景采样。各项短 idle 数据不代表动画峰值或性能排序。
-- 当前 3840×2400 模式由 Windows 显示设置接口报告为 240Hz，窗口 DPI 为 240（相对 96 DPI 的 250%）。同分辨率的 120Hz 模式可切换并已恢复；60Hz 测试模式被 Windows 报告为不支持。并未实测 100/150/200% 缩放。
-- PresentMon 2.6.0 的本地二进制哈希已与官方发布资产核对，但 ETW 会话启动返回 `access denied`。没有帧时间数据，未尝试提权或修改用户组。
+应用内部更新间隔需要应用自有计时；逐进程呈现提交间隔需 Present/ETW 证据；DWM 的 DwmGetCompositionTimingInfo/DWM_TIMING_INFO 提供全局合成时序与计数，但在 Windows 8.1 起 hwnd 参数必须为 NULL，因此不能按 Dock 单进程解释。[DwmGetCompositionTimingInfo](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/nf-dwmapi-dwmgetcompositiontiminginfo) · [DWM_TIMING_INFO](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ns-dwmapi-dwm_timing_info)。这是一项用户态 API 调查候选，尚未在本机执行验证。
 
-## 第三路线的可证伪实验
+Windows.Graphics.Capture 的 Direct3D11CaptureFrame.SystemRelativeTime 是合成器渲染该帧时的 QPC 时间；它可为捕获帧序列提供时间参考，不等价于应用 Present 调用时间，也不等价于面板实际 scanout。[Microsoft screen capture guidance](https://learn.microsoft.com/en-us/windows/uwp/audio-video-camera/screen-capture) · [SystemRelativeTime](https://learn.microsoft.com/en-us/uwp/api/windows.graphics.capture.direct3d11captureframe.systemrelativetime)。
 
-若继续探索 Win32 路线，先制作一次性 `Win32 + DirectComposition + Direct2D` PoC；如选择 Skia，则锁定具体 GPU/软件后端并把二进制、许可证和包体一并计入。统一沿用两个既有 PoC 的数据模型、图标尺寸、样本数和测试脚本。以下是建议的工程验收线，不是 Microsoft 的保证或任务书的官方标准：
+PresentMon 诊断要求管理员权限或 Performance Log Users 组。没有提权或组成员变更；在获得用户授权前不运行管理员采集。
 
-1. **输入与透明边界**：在三个停靠边、每种 DPI 下分别对 100 个内容点和 100 个透明点执行 `WindowFromPoint`，内容点 100/100 命中 Dock，透明点 0/100 命中 Dock；再用受控底层窗口实际点击每个透明区至少 20 次，全部由底层窗口收到。
-2. **DPI 与几何**：分别在 100%、150%、200% 和跨屏迁移后测屏幕物理矩形，边缘位置误差不超过 1 个物理像素；切换 8/24 项及 44/58/72 DIP 后没有越界、裁切或错误方向。
-3. **窗口状态**：对任务栏自动隐藏/可见、独占全屏和无边框全屏分别检查遮挡、激活、恢复与边缘占位；任一状态丢失输入、覆盖任务栏或不能恢复即否证。
-4. **帧与资源**：每配置至少运行 5 轮 × 30 秒，有可复核 ETW/PresentMon 帧记录；在 60 和 120Hz 下，p95 帧间隔不高于目标刷新周期，错过刷新周期的帧少于 1%，同时记录 CPU、专用/共享 GPU 内存、Working Set 和 Private Bytes。若采样权限或刷新模式不可用，结果为未验证，不能算通过。
-5. **比较规则**：与 WPF/WinUI 同机器、同窗口覆盖面积、同刷新率、同动画和相同样本做交错顺序测试；只有当输入/窗口要求全部通过且至少一项关键瓶颈显著改善、没有另一项明显退化，才保留第三路线。否则淘汰该实验版本。
+## 许可证选项比较
 
-在现有 alpha-hole 失败和帧时序缺失前，不以“更底层”推定 Native 路线胜出，也不冻结生产框架。
+这不是路线选型或许可选择；根 LICENSE 当前仍是未授予许可的占位文件。
+
+| 选项 | 主要影响 | 适合的目标 |
+|---|---|---|
+| MIT | 宽松许可；保留版权和许可声明，提供免责条款 | 易于复用、衍生或商业分发 |
+| Apache-2.0 | 宽松许可；含明确专利授权/诉讼终止规则，并有声明、NOTICE 等分发义务 | 宽松使用且希望有明确专利条款 |
+| GPL-3.0 | 强 copyleft；分发覆盖作品时需遵循 GPL 相应的源码与再分发义务 | 希望衍生分发继续共享相同许可自由 |
+| 暂不公开发行 | 保留权利，不授予公众开源复制、修改、再分发授权 | 尚未决定是否发布 |
+
+MIT 的许可文本和条件见 [OSI MIT license](https://opensource.org/license/mit)；Apache 2.0 的版权、专利授权及再分发条件见 [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0.html)；GPLv3 的目的和 copyleft 概述见 [GNU GPLv3 quick guide](https://www.gnu.org/licenses/quick-guide-gplv3.html)。Apache Software Foundation 说明 Apache-2.0 与 GPLv3 兼容，不代表 GPLv3 与所有旧版 GPL 兼容。[ASF compatibility note](https://apache.org/licenses/GPL-compatibility.html)。本项目最终选择由用户决定；未决定前不修改许可证、不公开分发。
+
+## 决策建议与可证伪下一步
+
+当前不冻结生产路线。WPF 仅作为透明输入行为的临时领先候选；WinUI 透明区真实事件路由是已复现失败项。WPF 还缺深色、多 DPI、多屏、系统共存、有效帧时序等 P0 证据；WinUI 内容点与拖动仍未测。
+
+在继续桌面交互前，用户必须明确同意；本轮仅本地构建与 Core 单元测试通过。优先使用不改变桌面状态的代码检查、构建和 API 调研。获得许可后再按三条 Dock 边和候选补充输入/视觉测试。若 WinUI 的透明输入只能靠不可维护的私有接口规避，或 WPF 在跨 DPI/系统共存中出现不可接受限制，才为两条路线分别定量记录缺陷并决定是否制作原生最小 PoC。
+
+建议的第三路实验必须保持范围小：同一输入探针、同一几何和可比较环境；分别测 HWND 透明输入命中和 DirectComposition 内容绘制；需要真实下层窗口消息而非只查 WindowFromPoint；不预设性能优势。当前证据不足以批准该 PoC，也不足以冻结 WPF。

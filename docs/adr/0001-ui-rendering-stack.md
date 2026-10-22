@@ -5,21 +5,31 @@
 
 ## Context
 
-The first prototype must support an undecorated, translucent, edge-positioned Dock with eight placeholder icons. Compare WinUI 3 with Windows App SDK Composition and WPF with Windows Composition interop using the same geometry and sample content. Assess Win32 + DirectComposition/Direct2D/Skia as the third route and state how the analysis could be disproved.
+The first prototype needs an undecorated, translucent, edge-positioned Dock with eight placeholder icons. M0 compared WinUI 3 with Windows App SDK and WPF with Win32 interop using shared geometry and test content. Win32 + DirectComposition/Direct2D remains a possible minimal experiment only if both existing routes show material limitations.
 
 ## Decision
 
-Not made. Both candidate spikes build and launch on this machine. At the current reported 240 DPI, WPF's transparent-corner `WindowFromPoint` query passed on all three edges; WinUI's failed on all three. Idle CPU/memory values are short and mixed, while frame time could not be captured because PresentMon's ETW session was denied. The main desktop project remains an empty class library.
+Not made. WPF currently leads only on the measured transparent-input requirement: in one Windows 11 environment reported at 250% DPI and 240Hz, a controlled lower Win32 window received synthetic SendInput single-click, double-click and drag-start messages through transparent regions on Bottom, Left and Right WPF docks. Dock content clicks and drags were received by WPF.
 
-## Evidence required
+WinUI 3 did not pass the same transparent-corner test: its root received single and double pointer events at all three edges, while the underlying window received no clicks. WinUI content-area and drag cases were not completed because the test did not locate a reliable icon point.
 
-- Windows version/build, SDK/runtime, display and DPI settings.
-- Build and launch commands and exit codes for both spikes.
-- Observed transparency and alpha-hole hit testing, resize, edge placement, light/dark backdrop, and failure cases.
-- Process CPU, working-set/private bytes, and frame-time method, with the sample size and limitations stated.
-- Third-route estimate grounded in official API documentation and a falsifiable next experiment.
-- 100/150/200% DPI, taskbar/fullscreen, light/dark visual transmission, actual underlying-app clicks, tray Exit interaction, and project license confirmation.
+One WGC frame confirms DWM-composed translucency and shadow for WPF/Light/Bottom/58 DIP; the checker pattern remained crisp and no background blur was observed. No paired WinUI, dark-theme, other-edge, DPI, or size captures exist. PresentMon ETW returned access denied, so there is no measured per-process frame-time result. DWM global timing is a documented user-mode candidate, not yet verified on this machine.
 
 ## Consequences
 
-Until these evidence gaps are closed, no candidate is treated as the production framework. Do not start M1 or claim that transparency, 60/120 Hz frame pacing, taskbar/fullscreen behavior, or cross-DPI behavior has passed. Detailed results and proposed falsification criteria are in [M0 report](../dock-evidence/M0/M0-report.md) and [route comparison](../tech-spike-comparison.md).
+- M0 remains blocked; M1 does not start.
+- Do not freeze WPF or WinUI as the production stack.
+- WPF is a temporary input-behavior lead only.
+- Do not claim 120Hz/240Hz animation performance, cross-DPI behavior, fullscreen/taskbar coexistence, or complete liquid-glass rendering.
+- Revisit native Win32 + DirectComposition only after the existing candidates have evidence-backed limitations; do not infer superiority from lower-level APIs.
+
+## Evidence required before decision
+
+- Reproducible WPF and WinUI real input receipt at content and transparent points, with user-approved interactive test conditions.
+- DWM composed captures across both themes, multiple backgrounds, Dock edges and sizes; distinguish alpha translucency from actual blur/acrylic.
+- 100/150/200/250% DPI, supported refresh modes, and multi-monitor movement where hardware permits.
+- Normal maximized, borderless fullscreen, exclusive fullscreen when available, taskbar, focus changes, hide/show and recovery behavior.
+- Per-process submission metrics and global DWM compositor timing kept as distinct measures; never label either panel scanout without an appropriate display-side measurement.
+- Current-source build, unit tests and a clean clone of the exact tested revision; remote CI reported separately.
+
+See [M0 report](../dock-evidence/M0/M0-report.md), [requirement matrix](../dock-evidence/M0/REQ-matrix.md) and [technology comparison](../tech-spike-comparison.md).
