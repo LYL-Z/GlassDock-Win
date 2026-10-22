@@ -3,7 +3,7 @@
 - 日期：2026-10-22
 - 项目：D:\MacOS\GlassDock-Win
 - 状态：**M0 未验收通过；P0 缺口仍在；不进入 M1，不冻结生产技术路线。**
-- 本轮边界：补足真实输入路由证据、一次 DWM 合成捕获及本机代码/单测结果；没有推送远端，没有提权，没有更改用户组。本轮最后收到用户明确要求：任何会覆盖桌面或注入鼠标的测试先征得同意。因此不再启动此类测试，也不切换显示模式。
+- 本轮边界：更新报告/矩阵/路线复评；完成精确提交 `3a6ca88b6925f60ecea5971f8781b7482153ed0c` 的 D 盘独立克隆；静态审查 WinUI 命中路径；实现被动 DWM 探针及交互测试安全看门狗；本机 Release 构建和单测通过。没有运行桌面交互、输入注入、全屏、显示设置或提权操作。代码/doc 修改在本轮结束前尚未推送；当前远端已确认通过的 CI 仅针对原始提交，后续修改需要各自的精确 SHA Actions 结果。
 
 ## 1. 当前环境与证据边界
 
@@ -11,7 +11,7 @@
 
 同分辨率的 Windows 显示模式查询曾确认可切换 120Hz 并恢复到 240Hz；60Hz 的 CDS_TEST 返回 -2（该模式不受支持）。100/150/200% DPI、60Hz、240Hz 动画帧时间和多显示器组合没有通过实际 Dock 交互完成验证。不要从已有 250%/240Hz 结果外推。
 
-Git 起始状态为 main、HEAD 1b22371e220a0cacbaaddc8a559407815167a2e8、无已配置远端。工作树中的本轮更改为两个 PoC 输入追踪代码、输入探针项目、输入测试脚本和 M0 报告、矩阵、README、技术比较、ADR。当前源码没有远端 CI 结果。D 盘本机工作树是本轮操作目标；没有在 C 盘创建项目文件、证据或构建输出。
+本轮起始状态为 `main`、HEAD `3a6ca88b6925f60ecea5971f8781b7482153ed0c`、工作区干净，remote 为 `https://github.com/LYL-Z/GlassDock-Win.git`。本轮变更限于安全控制脚本/探针、解决方案纳入测试探针，以及 M0 文档。构建、缓存、克隆、日志和证据均在 `D:\MacOS\GlassDock-Win` 下；没有在 C 盘创建项目文件、证据或构建输出。
 
 ## 2. 真实鼠标事件接收测试
 
@@ -89,7 +89,7 @@ CPU、内存和 GPU 表是此前在当前机器采集的静态 idle 样本，不
 |---|---|---|
 | 应用内部更新间隔 | 应用自计时或逻辑更新日志 | 未实现 / 未采集，NOT TESTED |
 | 逐进程呈现提交和 GPU 帧时序 | PresentMon / ETW | PresentMon v2.6.0 退出码 6；StartTrace 返回 access denied；没有帧 CSV，BLOCKED |
-| DWM 全局合成节奏 | DwmGetCompositionTimingInfo / DWM_TIMING_INFO | [Microsoft API 文档](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/nf-dwmapi-dwmgetcompositiontiminginfo) 给出受支持的桌面 API；Windows 8.1 起 hwnd 必须为 NULL，所得为全局合成器信息，不能当作某个 Dock 的逐进程呈现或面板扫描输出。[计时结构](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ns-dwmapi-dwm_timing_info) 中 cFramesDisplayed / cFramesDropped 需第二次调用后才有效。文档没有列出调用需要提权；据此它是潜在的非提权方案（推断），但本机尚未运行验证，NOT TESTED |
+| DWM 全局合成节奏 | DwmGetCompositionTimingInfo / DWM_TIMING_INFO | 本机被动探针 8/8 次 S_OK，当前令牌未启用管理员角色；结构 292 字节，刷新/全局 compose-rate 约 239.998–240.004Hz。此数值仅为全局 DWM 时序，不能当作 Dock 逐进程呈现或面板扫描输出；首次调用外的累计帧计数按 Microsoft 文档解释。该子测试 PASS；整体 Dock 帧时序要求仍 BLOCKED |
 | WGC 合成帧时间 | Direct3D11CaptureFrame.SystemRelativeTime | [Microsoft 文档](https://learn.microsoft.com/en-us/uwp/api/windows.graphics.capture.direct3d11captureframe.systemrelativetime) 定义为合成器渲染帧时的 QPC 时间；现有视觉证据只有一帧，不能从单帧算帧间隔 |
 | 显示器实际 scanout | 面板/硬件级测量 | 未采集，NOT TESTED |
 
@@ -97,67 +97,89 @@ CPU、内存和 GPU 表是此前在当前机器采集的静态 idle 样本，不
 
     D:\MacOS\GlassDock-Win\.tools\PresentMon\PresentMon-2.6.0-x64.exe --process_id <PoC_PID> --timed 10 --terminate_after_timed --output_file D:\MacOS\GlassDock-Win\.local\evidence\frames\<candidate>-<run>.csv --session_name <session-name> --no_console_stats
 
-工具诊断指出 ETW 采集需要管理员权限或 Performance Log Users 组成员资格；这两者均未使用。管理员执行会扩大本次采集权限，组成员变更会持久改变账户权限；采集还会记录进程呈现时序数据。未提供管理员授权，也未改组或提权。DwmGetCompositionTimingInfo 是下一项可调查的无需 ETW 会话权限的候选，但只提供全局 DWM 时间信息，当前仍未经本机实测。
+工具诊断指出 ETW 采集需要管理员权限或 Performance Log Users 组成员资格；这两者均未使用。管理员执行会扩大本次采集权限，组成员变更会持久改变账户权限；采集还会记录进程呈现时序数据。未提供管理员授权，也未改组或提权。DWM API 探针已作为非提权观察运行成功，证据文件：`D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\dwm\dwm-composition-20261022T121946Z.jsonl`。一次 Pack=8 结构布局不匹配的探测记录 HRESULT `0x88980090`；修正为 Pack=4 后连续 8 个样本 `S_OK`。探针不创建窗口、不改设置、不注入输入。它只测全局 DWM，不能填补 Dock 自身更新/提交/scanout 的缺口。
 
-没有证据证明达到 120Hz 或 240Hz 流畅度目标。
+没有证据证明达到 120Hz 或 240Hz 动画流畅度目标。DWM 报告约 240Hz 的全局 compose-rate 不是 Dock 性能证明。
 
-## 7. WPF 与 WinUI 3 技术复评
+## 7. WinUI 3 命中路径与技术路线复评
 
-| 维度 | WPF + Win32 互操作 | WinUI 3 + Windows App SDK | 当前判断 |
-|---|---|---|---|
-| 逐像素透明与点击穿透 | 当前 PoC 使用 WPF 无边框透明窗及 HWND 命中测试；受控窗口真实收到三边透明角单击、双击和拖动起始事件 | 三边透明角的合成输入被 Dock 根窗口接收，底层窗口未收到 | WPF 暂时领先；WinUI 有已复现 P0 失败 |
-| DWM / DirectComposition | WPF 窗口由 Windows 合成；没有直接评测额外 Composition 视觉树 | Composition API 可与 WinUI 集成；框架使用 Composition 不自动证明 alpha 输入穿透或 Present 时序 | 两边的 DWM 合成性能仍缺系统化对照 |
-| 液态玻璃 | 当前捕获只显示 alpha 透射与阴影，没有观察到背景模糊 | WinUI/Composition 有视觉效果扩展空间，但本 PoC 未捕获、未测效果 | 两边都未验证完整玻璃效果 |
-| 动画性能和帧时间 | 无 PresentMon 帧样本；现有资源为静态 idle | 同样无有效帧样本 | 无法排序 |
-| 高 DPI、多显示器、动态刷新 | 250% 单屏下输入测试；跨 DPI/屏幕、动态变化未测 | 同样未完成，且透明输入已失败 | 两边均未通过适配门槛 |
-| 顶层窗口、任务栏、全屏共存 | 旧窗口探测显示置顶；真实任务栏/全屏共存和恢复未测 | 旧窗口探测显示置顶；真实任务栏/全屏共存和恢复未测 | 不能从 topmost 属性推出共存能力 |
-| Windows 11 API 与维护 | WPF 加少量明确 Win32 消息钩子；需要约束平台互操作与 DPI 生命周期 | WinUI AppWindow/Windows App SDK 互操作边界；需跟踪 SDK/runtime 部署兼容性 | 可维护性需在关键行为证明后再评估 |
-| 后续扩展成本 | 适合当前快速 PoC；是否能承载复杂 Composition 渲染、设备丢失和多屏场景未知 | 提供现成 UI/Composition 框架，但核心输入限制需先解决 | 现阶段不做生产选型 |
+`LayoutRoot` 透明 Grid 覆盖整个 WinUI 窗口，并订阅根 Pointer 事件；窗口仍由矩形 HWND 承载。透明角运行日志显示根元素收到 PointerPressed，处理器没有设置 `Handled`。因此失败不是 Dock 按钮误吞事件，而是系统窗口命中与 XAML 根视觉树共同截获。当前可检验的公开 API 候选是 `SetWindowRgn`：将窗口区域限为胶囊外形可能让四角下传，但它会剪裁绘制，圆角抗锯齿、阴影和模糊边缘存在风险。该候选尚未实施或运行。`WS_EX_TRANSPARENT` 会让整个 layered window 的输入下传而失去内容交互；`HTTRANSPARENT` 的公开语义依赖同线程下层窗口，不足以保证当前独立下层进程。
 
-结论：WPF 是当前真实点击穿透证据下的临时领先候选，不是最终决定。WinUI 的实际透明区失败必须先解决或确认其不可维护地绕过。还需补足视觉、DPI/多屏、刷新帧时序和系统共存证据。只有两条现有路线都暴露出明确且实质性的底层限制时，再制作范围受控的 Win32 + DirectComposition PoC；目前没有证据支持它必然更快或自动解决输入命中。
+WPF 使用 `AllowsTransparency=True` 并另有 `WM_NCHITTEST` 圆角逻辑。它在现有合成输入场景下真实通过，但日志没有隔离 alpha-hit-test 和 hook 两个机制，也未测物理鼠标、高 DPI、多屏或应用共存。因此 WPF 是输入行为的临时领先候选，不能据此冻结。请见[技术路线比较与停止条件](../../tech-spike-comparison.md)。
 
-## 8. 构建、单测、CI、克隆与许可证
+## 8. 本地、干净克隆和远程 CI 结果
 
-本轮在源仓库当前工作树运行：
+### 本机工作树（D 盘）
 
-| 操作 | 命令 | 结果 |
-|---|---|---|
-| Release 构建 | .\scripts\build.ps1 | PASS；8 个项目；0 警告、0 错误；本轮代码编译成功 |
-| Core 单元测试 | .\scripts\test.ps1 -NoRestore | PASS；11/11 |
-| 输入探针独立构建 | .\.tools\dotnet\dotnet.exe build spikes\GlassDock.M0.InputProbe\GlassDock.M0.InputProbe.csproj --configuration Release --no-restore | PASS；0 警告、0 错误；没有启动探针窗口 |
-| 实际输入测试 | scripts\verify-poc-input.ps1 的 20261022T104053Z 运行 | WPF 三边 PASS；WinUI 透明区三边 FAIL；WinUI 内容区与拖动 NOT TESTED |
-| 当前改动 clean clone | 未运行 | NOT TESTED |
-| GitHub Actions 远端 CI | 当前未配置 remote；未推送 | NOT TESTED |
+| 验证 | 结果 |
+|---|---|
+| .NET SDK | 10.0.402；来自项目 `.tools\dotnet`；NuGet、CLI、临时、缓存/中间文件均指向 D 盘 |
+| 依赖恢复 | PASS；`dotnet restore ... --locked-mode --disable-build-servers`，退出码 0 |
+| Release 解决方案构建 | PASS；本轮 9 个项目，0 warnings、0 errors，退出码 0，用时 14.16 秒；未启动 PoC |
+| Core 单元测试 | PASS；11/11，0 failed、0 skipped，退出码 0 |
+| PowerShell 静态解析 | PASS；`common.ps1`、交互安全、输入、窗口、CPU/GPU/PresentMon、DWM 共 8 个脚本均无 ParserError |
+| 安全互操作源编译 | PASS；只执行 `Add-Type` 编译 P/Invoke 声明，没有调用桌面 API |
+| DWM 被动探针 | PASS；当前未启用管理员角色；2 秒约 8 次查询，S_OK 8/8；仅全局 DWM 指标 |
+| 交互脚本 | 未运行；没有注入输入/覆盖桌面/改变焦点或显示模式 |
 
-旧报告记录过从提交 62c35de85256698f06b1f08359a43ac0f3acfb81 做的 D 盘 clean clone。它不是当前 HEAD，也不包含现在的输入追踪改动，不能当作当前改动的 clean-clone 证据。远端 workflow 文件存在也不等于 GitHub Actions 运行通过。
+当前改动验证日志在 `D:\MacOS\GlassDock-Win\.local\evidence\final-validation\`：`dotnet-info.txt`、`restore-current.log`、`build-current.log`、`test-current.log`、`summary-current.txt`。所有构建输出和恢复缓存都位于 D 盘。该构建没有启动 Dock PoC，因此不能当作桌面交互或当前改动的视觉验证。
 
-项目许可证尚未选择，根 LICENSE 仍是未授予许可的占位内容。比较仅供权利人决策，不构成法律意见：
+### 精确 SHA 干净克隆
 
-| 方案 | 大致分发效果 | 适用考虑 |
-|---|---|---|
-| MIT | 宽松许可；允许使用、修改、再分发及销售，要求保留版权和许可声明，并含免责条款 | 希望最少使用限制、广泛复用 |
-| Apache-2.0 | 宽松许可；含明确专利授权及专利诉讼终止条款，保留声明并处理 NOTICE 等要求 | 希望宽松采用，同时更明确地处理贡献者专利授权 |
-| GPL-3.0 | 强 copyleft；分发覆盖作品时有源码、许可、修改和相应条款义务 | 希望衍生分发继续共享相同自由；需审慎评估分发与组合方式 |
-| 暂不公开发行 / 保留所有权利 | 不作开源许可授权；第三方通常不能据此取得复制、修改或分发授权 | 尚未决定公开策略时的临时状态；当前 LICENSE 已表达未授予许可 |
+从 GitHub 在 `D:\MacOS\GlassDock-Win\.local\clean-clones\3a6ca88b6925f60ecea5971f8781b7482153ed0c` 建立独立克隆，HEAD 与指定 SHA `3a6ca88b6925f60ecea5971f8781b7482153ed0c` 一致，初始 Git 状态干净。克隆内独立安装 .NET SDK `10.0.402`；`DOTNET_CLI_HOME`、NuGet 包/HTTP 缓存、obj/bin、测试日志均落在克隆目录的 D 盘 `.local` / `.tools`。没有依赖主工作区非跟踪文件。
 
-如目标是广泛复用，可比较 MIT 与 Apache-2.0；如希望分发后的衍生作品继续受 GPL 条款约束，则评估 GPL-3.0；如还没决定是否公开，则先保持未公开发行。项目当前许可证决定留给用户，不做修改或发布。
+| 命令/步骤 | Exit code | 结果 |
+|---|---:|---|
+| `dotnet restore GlassDock-Win.sln --configfile NuGet.Config --locked-mode --disable-build-servers` | 0 | PASS；恢复日志 `restore.log` |
+| `dotnet build GlassDock-Win.sln --configuration Release --no-restore -p:ContinuousIntegrationBuild=true --disable-build-servers` | 0 | PASS；0 warnings、0 errors，约 13.17 秒 |
+| `dotnet test GlassDock-Win.sln --configuration Release --no-restore -p:ContinuousIntegrationBuild=true --logger console;verbosity=normal --disable-build-servers` | 0 | PASS；11/11 |
 
-许可原文参考：[MIT（OSI）](https://opensource.org/license/mit)、[Apache-2.0（ASF）](https://www.apache.org/licenses/LICENSE-2.0.html)、[GPLv3（GNU）](https://www.gnu.org/licenses/gpl-3.0.en.html) 与 [GNU GPLv3 说明](https://www.gnu.org/licenses/quick-guide-gplv3.html)。
+环境和日志：`D:\MacOS\GlassDock-Win\.local\clean-clones\3a6ca88b6925f60ecea5971f8781b7482153ed0c\.local\evidence\clean-clone\`（`dotnet-info.txt`、`environment.json`、`restore.log`、`build-final.log`、`test-final.log`、`summary.txt`）。这证明指定旧提交 clean clone，不代表本轮未提交改动的 clean clone。
 
-## 9. M0 总结
+### GitHub Actions（基线提交）
 
-M0 的局部基础工程与本地构建/单测通过，但不是验收通过。WPF 的受控真实输入路由在当前屏幕模式下通过；WinUI 透明角实际事件路由失败；DWM 真实合成仅有一张 WPF/浅色/Bottom 截图且未看到背景模糊；帧时间、跨 DPI、多屏、任务栏/全屏/托盘/配置恢复仍有 P0 缺口；项目许可证未决定。结果详见 [逐项需求矩阵](REQ-matrix.md)。
+用户已确认 M0-19 的基线远程 CI 通过。本轮重新读取 GitHub REST 结果：提交 `3a6ca88b6925f60ecea5971f8781b7482153ed0c` 的 push workflow `Windows CI` 已完成，run `39767098768`，结论 `success`；唯一 job `build-and-test` 成功，Build 和 Test 步骤均 `success`。[实际运行记录](https://github.com/LYL-Z/GlassDock-Win/actions/runs/39767098768)。本轮文件修改尚未获得独立 Actions 结果；提交并推送后应检查该精确新 SHA。工作流文件存在、原基线通过、当前改动远程通过是三件不同的事。
 
-**明确结论：M0 暂不验收；技术路线不冻结；M1 不开始。** 后续全屏桌面覆盖、合成输入或显示模式变化测试，须先征得用户同意。当前只完成了 D 盘本地构建和 Core 单元测试，没有运行交互回归。
+## 9. 仓库公开与许可证状态
 
-## 10. 证据位置
+仓库公开，代码可在 GitHub 中被查看和 fork；这与项目授权不是同一件事。GitHub 对公开仓库的服务许可不等于 MIT/Apache/GPL 等广泛使用、修改和再分发授权。[GitHub 许可证说明](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/licensing-a-repository)。根 `LICENSE` 未修改；其现有“Do not redistribute, publish”绝对语句与 GitHub 允许在服务内 fork 的措辞不协调。建议由权利人选择许可证后再改为正式文本；若继续暂不授权，可考虑仅澄清为“未授予项目级许可，GitHub 服务条款允许的查看和 fork 除外”。这个替换建议没有写入 `LICENSE`，等待用户决定。
+
+| 选项 | 对复用、商业化和衍生分发的主要影响 |
+|---|---|
+| MIT | 宽松许可，允许使用、修改、商业使用和再分发；需保留版权与许可声明，提供免责条款 |
+| Apache-2.0 | 宽松许可；有明确贡献者专利授权及专利诉讼终止条款，且需保留声明并遵守 NOTICE 等要求 |
+| GPL-3.0 | 使用和修改允许；再分发覆盖作品/衍生作品时需遵守相应 copyleft、源码提供和许可义务 |
+| 暂不公开授权 | 保留著作权且不授予广泛复制、修改、商业使用和再分发权；GitHub 内查看/fork服务权限仍适用 |
+
+没有自行选择许可证；MIT/Apache/GPL 差异仅供用户决策，不构成法律意见。
+
+## 10. 测试安全保护与待授权计划
+
+安全控制已经写入交互脚本：显式 `-ConfirmInteractiveTest` 和精确短语确认；PowerShell 高影响 `ShouldProcess`；单独隐藏看门狗进程；全局紧急键 `Ctrl+Shift+F12`；10–1800 秒 timeout；manifest 限定 D 盘证据目录；只在 PID、可执行文件路径和进程启动时间三者吻合时停止本轮进程；异常超时清理；异常恢复已登记的本地配置副本、释放本脚本注入且仍按下的鼠标左键，并尝试恢复原前台窗口。结束后检查任务栏可见性/边界、屏幕边界、环境变量、测试进程、看门狗和文件恢复。八个 PowerShell 脚本解析通过、程序集构建通过；**紧急键、watchdog timeout 和真实恢复流程没有交互运行验证**，因其测试会影响桌面，必须取得用户逐项许可。
+
+建议授权顺序（每一项开始前单独确认范围）：
+
+1. **点击路由，优先级 P0，约 4–6 分钟**：专用下层窗口实时记录消息；比较 WPF 基线与 WinUI 当前版本；若先完成公开 region 候选，再加一组候选对照。Bottom/Left/Right；内容区单击/双击，透明区单击/双击，透明区按住拖出/拖入。脚本会显示全屏顶置背景并改变前台焦点，使用 SendInput 合成鼠标（不注入键盘）；按 `Ctrl+Shift+F12` 立即停止；输入脚本默认 900 秒超时、参数上限 1800 秒。结束后检查恢复文件、任务栏/屏幕边界和前台窗口。
+2. **视觉捕获，优先级 P0，约 2–3 分钟/批**：对照背景窗口、Dock 和 Windows.Graphics.Capture；浅/深主题、中心/圆角、背景 alpha/模糊/边缘/阴影，逐步覆盖 Bottom/Left/Right 和 44/58/72 DIP。会显示受控桌面背景并出现 Dock，捕获当前桌面图像写入 D 盘；不会注入输入或切换显示设置；快捷停止为 `Ctrl+Shift+F12`，看门狗默认 900 秒且最高配置为 1800 秒；结束时验证前台和窗口/显示边界。
+3. **系统共存，优先级 P0，约 5–8 分钟**：经批准后依次运行任务栏共存、最大化、无边框窗口、Show/Exit、隐藏/恢复和配置异常修复。它会启动项目自己的可见窗口、切换焦点并打开托盘菜单；暂不包含独占全屏和系统设置变更；紧急键/看门狗相同，结束后核验桌面状态。
+4. **DPI/分辨率/刷新模式，P0 环境补测，约 5 分钟/模式**：本机 DPI/模式切换会改变桌面和其他窗口的物理显示。当前没有经过验证的独立恢复通道，所以**本轮不申请、不执行**；待制定由操作系统显示模式外部回滚/第二显示设备双屏确认的恢复演练后，再提交单独申请。优先使用本机原生支持的 DPI/刷新组合或外接显示器；虚拟机仅作为逻辑适配补充。
+5. **独占全屏，优先级 P1，约 2 分钟**：需启动能确认真正进入独占模式的测试程序，可能遮挡/抢占桌面；采用单独方案、Ctrl+Shift+F12、安全超时与退出恢复验证；不与一般窗口/边框全屏混为一项。
+
+## 11. M0 总结与决策
+
+本地 Release 构建、Core 单测、精确 SHA clean clone、原 SHA GitHub Actions，以及被动 DWM API 调用均有正面证据；其中 DWM 只证实全局 compose-rate 采样可用。WPF 在有限合成输入条件下通过；WinUI 透明角失败；唯一的浅色 WPF 合成帧只有透射/阴影，没有观察到模糊。DPI/多屏、任务栏/全屏共存、托盘/配置恢复、Dock 进程帧时间和路线视觉能力仍未完成验收。
+
+**明确结论：M0 暂不通过；不进入 M1；不冻结 WPF、WinUI 或 DComp。** 设备依赖的未覆盖组合保留 NOT TESTED；可通过当前机器代码/交互验证的架构缺口保持 BLOCKED/FAIL。未经独立授权，不启动上述任何桌面交互测试。
+
+## 12. 证据位置
 
 - 需求矩阵：REQ-matrix.md
 - 技术路线复评：../../tech-spike-comparison.md
 - UI 栈 ADR：../../adr/0001-ui-rendering-stack.md
-- 输入脚本：../../../scripts/verify-poc-input.ps1
-- 输入接收程序：../../../spikes/GlassDock.M0.InputProbe/
-- 合成截图与元数据：D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\visual\
-- 输入事件 CSV 与原始日志：D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\input\20261022T104053Z\
+- 交互测试安全控制：../../../scripts/interactive-test-safety.ps1、`../../../spikes/GlassDock.M0.InputProbe/M0SafetyWatchdog.cs`
+- 输入测试入口：../../../scripts/verify-poc-input.ps1；原始输入证据：`D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\input\20261022T104053Z\`
+- DWM 探针：../../../scripts/measure-dwm-composition.ps1；输出：`D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\dwm\dwm-composition-20261022T121946Z.jsonl`
+- WGC 截图与元数据：`D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\visual\`
+- 指定 SHA 干净克隆日志：`D:\MacOS\GlassDock-Win\.local\clean-clones\3a6ca88b6925f60ecea5971f8781b7482153ed0c\.local\evidence\clean-clone\`
 - 先前资源汇总：runtime-summary.csv、gpu-summary.csv
-- PresentMon 错误记录：D:\MacOS\GlassDock-Win\.local\evidence\frames\PresentMon-Wpf-20261022T091522Z.stderr.txt
+- PresentMon 错误记录：`D:\MacOS\GlassDock-Win\.local\evidence\frames\PresentMon-Wpf-20261022T091522Z.stderr.txt`

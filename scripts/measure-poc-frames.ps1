@@ -1,4 +1,6 @@
+[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
+    [switch]$ConfirmInteractiveTest,
     [Parameter(Mandatory)]
     [ValidateSet('Wpf', 'WinUI')]
     [string]$Candidate,
@@ -12,6 +14,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
+. (Join-Path $PSScriptRoot 'interactive-test-safety.ps1')
 
 $projectFolder = if ($Candidate -eq 'Wpf') {
     Join-Path $script:RepoRoot 'spikes\GlassDock.PoC.Wpf'
@@ -41,6 +44,14 @@ $timestamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')
 $csvPath = Join-Path $evidenceDirectory "${Candidate}-${ItemCount}items-${IconSize}dip-$timestamp.csv"
 $stdoutPath = Join-Path $evidenceDirectory "PresentMon-$Candidate-$timestamp.stdout.txt"
 $stderrPath = Join-Path $evidenceDirectory "PresentMon-$Candidate-$timestamp.stderr.txt"
+$watchdogExe = Join-Path $script:RepoRoot 'spikes\GlassDock.M0.InputProbe\bin\Release\net10.0-windows10.0.19041.0\win-x64\GlassDock.M0.InputProbe.exe'
+if (-not (Test-Path -LiteralPath $watchdogExe)) { throw "Build the safety watchdog first: $watchdogExe" }
+Confirm-M0InteractiveTest $ConfirmInteractiveTest -Purpose "show a topmost $Candidate Dock window and collect PresentMon/ETW frame timing"
+if (-not $PSCmdlet.ShouldProcess('Current desktop', 'Launch visible topmost Dock PoC and run PresentMon capture')) { return }
+$session = Start-M0InteractiveTestSession -RepoRoot $script:RepoRoot -LocalRoot $script:LocalRoot `
+    -Purpose "visible $Candidate topmost Dock window and PresentMon ETW session; frame timing not assumed until data validates" `
+    -WatchdogExe $watchdogExe -TimeoutSeconds ([Math]::Min(1800, $DurationSeconds + 90))
+$runCompleted = $false
 
 $oldItemCount = $env:GLASSDOCK_POC_ITEM_COUNT
 $oldIconSize = $env:GLASSDOCK_POC_ICON_SIZE
@@ -51,7 +62,11 @@ try {
     $env:GLASSDOCK_POC_ITEM_COUNT = [string]$ItemCount
     $env:GLASSDOCK_POC_ICON_SIZE = [string]$IconSize
     $env:GLASSDOCK_POC_STATE_ROOT = Join-Path $script:LocalRoot "poc-state\$Candidate"
-    $process = Start-Process -FilePath $exePath -WorkingDirectory $projectFolder -PassThru
+    $process = Start-M0OwnedTestProcess -Session $session -FilePath $exePath -WorkingDirectory $projectFolder
+}
+catch {
+    try { [void](Stop-M0InteractiveTestSession -Session $session -Completed $false) } catch { }
+    throw
 }
 finally {
     if ($null -eq $oldItemCount) { Remove-Item Env:GLASSDOCK_POC_ITEM_COUNT -ErrorAction SilentlyContinue }
@@ -63,6 +78,7 @@ finally {
 }
 
 try {
+    Assert-M0InteractiveTestCanContinue $session
     Start-Sleep -Seconds 3
     $arguments = @(
         '--process_id', [string]$process.Id,
@@ -72,13 +88,16 @@ try {
         '--session_name', "GlassDock${Candidate}$timestamp",
         '--no_console_stats'
     )
+    Assert-M0InteractiveTestCanContinue $session
     $capture = Start-Process -FilePath $presentMon -ArgumentList $arguments `
         -WorkingDirectory (Split-Path $presentMon) -PassThru `
         -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+    [void](Register-M0OwnedInteractiveProcess -Session $session -Process $capture)
     if (-not $capture.WaitForExit(($DurationSeconds + 30) * 1000)) {
-        Stop-Process -Id $capture.Id -Force
+        [void](Stop-M0OwnedTestProcess $session $capture)
         throw 'PresentMon capture timed out.'
     }
+    [void](Stop-M0OwnedTestProcess $session $capture)
 
     $captureOutput = @()
     if (Test-Path -LiteralPath $stdoutPath) { $captureOutput += Get-Content -LiteralPath $stdoutPath -ErrorAction SilentlyContinue }
@@ -107,34 +126,11 @@ try {
         CsvPath = $csvPath
         DiagnosticOutput = ($captureOutput -join "`n")
     } | Format-List
+    $runCompleted = $true
 }
 finally {
-    if ($process -and -not $process.HasExited) {
-        $process.Refresh()
-        $nativeMethods = @'
-using System;
-using System.Runtime.InteropServices;
-public delegate bool GlassDockGpuEnumWindowsCallback(IntPtr hwnd, IntPtr parameter);
-public static class GlassDockGpuNativeMethods
-{
-    [DllImport("user32.dll")] public static extern bool EnumWindows(GlassDockGpuEnumWindowsCallback callback, IntPtr parameter);
-    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
-    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
-    [DllImport("user32.dll", SetLastError=true)] public static extern bool PostMessage(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
-    public static IntPtr FindVisibleWindow(int targetProcessId)
-    {
-        IntPtr found=IntPtr.Zero;
-        EnumWindows((hwnd, _) => { GetWindowThreadProcessId(hwnd, out uint pid); if(pid==targetProcessId && IsWindowVisible(hwnd)){found=hwnd;return false;}return true;},IntPtr.Zero);
-        return found;
-    }
-}
-'@
-        Add-Type -TypeDefinition $nativeMethods
-        $window = [GlassDockGpuNativeMethods]::FindVisibleWindow($process.Id)
-        if ($window -ne [IntPtr]::Zero) {
-            [void][GlassDockGpuNativeMethods]::PostMessage($window, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
-            if (-not $process.WaitForExit(5000)) { Stop-Process -Id $process.Id -Force; $process.WaitForExit() }
-        }
-        else { Stop-Process -Id $process.Id -Force }
-    }
+    if ($capture) { try { [void](Stop-M0OwnedTestProcess $session $capture) } catch { Write-Warning "Capture-process cleanup failed: $($_.Exception.Message)" } }
+    if ($process) { try { [void](Stop-M0OwnedTestProcess $session $process) } catch { Write-Warning "Dock-process cleanup failed: $($_.Exception.Message)" } }
+    try { [void](Stop-M0InteractiveTestSession -Session $session -Completed $runCompleted) }
+    catch { Write-Warning "Interactive safety restoration failed; inspect $($session.EvidenceRoot): $($_.Exception.Message)" }
 }

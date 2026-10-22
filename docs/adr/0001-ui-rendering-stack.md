@@ -13,7 +13,7 @@ Not made. WPF currently leads only on the measured transparent-input requirement
 
 WinUI 3 did not pass the same transparent-corner test: its root received single and double pointer events at all three edges, while the underlying window received no clicks. WinUI content-area and drag cases were not completed because the test did not locate a reliable icon point.
 
-One WGC frame confirms DWM-composed translucency and shadow for WPF/Light/Bottom/58 DIP; the checker pattern remained crisp and no background blur was observed. No paired WinUI, dark-theme, other-edge, DPI, or size captures exist. PresentMon ETW returned access denied, so there is no measured per-process frame-time result. DWM global timing is a documented user-mode candidate, not yet verified on this machine.
+One WGC frame confirms DWM-composed translucency and shadow for WPF/Light/Bottom/58 DIP; the checker pattern remained crisp and no background blur was observed. No paired WinUI, dark-theme, other-edge, DPI, or size captures exist. PresentMon ETW returned access denied, so there is no measured per-process frame-time result. A passive DwmGetCompositionTimingInfo probe now returns S_OK without an enabled administrator role and reports about 240Hz globally; it does not measure the Dock process or physical scanout. WinUI has a possible public SetWindowRgn candidate for rounded-window hit testing, but it has not been implemented or tested and may clip shadows/edges.
 
 ## Consequences
 
@@ -22,6 +22,7 @@ One WGC frame confirms DWM-composed translucency and shadow for WPF/Light/Bottom
 - WPF is a temporary input-behavior lead only.
 - Do not claim 120Hz/240Hz animation performance, cross-DPI behavior, fullscreen/taskbar coexistence, or complete liquid-glass rendering.
 - Revisit native Win32 + DirectComposition only after the existing candidates have evidence-backed limitations; do not infer superiority from lower-level APIs.
+- Keep the repository's public visibility separate from the unselected project license. Do not change LICENSE until the owner decides.
 
 ## Evidence required before decision
 

@@ -1,4 +1,8 @@
+[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
+    [switch]$ConfirmInteractiveTest,
+    [ValidateRange(10, 1800)]
+    [int]$TimeoutSeconds = 900,
     [ValidateSet('Wpf', 'WinUI')]
     [string[]]$Candidates = @('Wpf', 'WinUI'),
     [ValidateSet('Bottom', 'Left', 'Right')]
@@ -7,6 +11,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
+. (Join-Path $PSScriptRoot 'interactive-test-safety.ps1')
 
 $nativeMethods = @'
 using System;
@@ -68,15 +73,22 @@ New-Item -ItemType Directory -Force -Path $stateRoot, $evidenceDirectory | Out-N
 $timestamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')
 $csvPath = Join-Path $evidenceDirectory "window-tests-$timestamp.csv"
 $results = [System.Collections.Generic.List[object]]::new()
+$watchdogExe = Join-Path $script:RepoRoot 'spikes\GlassDock.M0.InputProbe\bin\Release\net10.0-windows10.0.19041.0\win-x64\GlassDock.M0.InputProbe.exe'
+if (-not (Test-Path -LiteralPath $watchdogExe)) { throw "Build the safety watchdog first: $watchdogExe" }
+Confirm-M0InteractiveTest $ConfirmInteractiveTest -Purpose 'launch visible topmost WPF/WinUI windows and inspect window hit-test/position state'
+if (-not $PSCmdlet.ShouldProcess('Current desktop', 'Launch visible topmost Dock PoCs for window-state checks')) { return }
+$session = Start-M0InteractiveTestSession -RepoRoot $script:RepoRoot -LocalRoot $script:LocalRoot `
+    -Purpose 'visible Dock window position, topmost and HWND hit-test inspection; no input injection' `
+    -WatchdogExe $watchdogExe -TimeoutSeconds $TimeoutSeconds
+$runCompleted = $false
 
+try {
 foreach ($candidate in $Candidates) {
     $candidateState = Join-Path $stateRoot $candidate
     New-Item -ItemType Directory -Force -Path $candidateState | Out-Null
     $settingsFileName = if ($candidate -eq 'Wpf') { 'wpf-poc-settings.json' } else { 'winui-poc-settings.json' }
     $settingsPath = Join-Path $candidateState $settingsFileName
-    $hadSettings = Test-Path -LiteralPath $settingsPath
-    $backupPath = Join-Path $evidenceDirectory "settings-backup-$candidate-$timestamp.json"
-    if ($hadSettings) { Copy-Item -LiteralPath $settingsPath -Destination $backupPath -Force }
+    Register-M0InteractiveRestoreFile -Session $session -TargetPath $settingsPath
 
     $projectFolder = if ($candidate -eq 'Wpf') {
         Join-Path $script:RepoRoot 'spikes\GlassDock.PoC.Wpf'
@@ -94,8 +106,8 @@ foreach ($candidate in $Candidates) {
     $exePath = Join-Path $projectFolder "bin\Release\$framework\$exeName"
     if (-not (Test-Path -LiteralPath $exePath)) { throw "Missing PoC executable: $exePath" }
 
-    try {
-        foreach ($edge in $Edges) {
+    foreach ($edge in $Edges) {
+            Assert-M0InteractiveTestCanContinue $session
             Set-Content -LiteralPath $settingsPath -Value "{`"Edge`":`"$edge`"}" -Encoding utf8
             $oldItemCount = $env:GLASSDOCK_POC_ITEM_COUNT
             $oldIconSize = $env:GLASSDOCK_POC_ICON_SIZE
@@ -104,7 +116,7 @@ foreach ($candidate in $Candidates) {
                 $env:GLASSDOCK_POC_ITEM_COUNT = '8'
                 $env:GLASSDOCK_POC_ICON_SIZE = '58'
                 $env:GLASSDOCK_POC_STATE_ROOT = $candidateState
-                $process = Start-Process -FilePath $exePath -WorkingDirectory $projectFolder -PassThru
+                $process = Start-M0OwnedTestProcess -Session $session -FilePath $exePath -WorkingDirectory $projectFolder
             }
             finally {
                 if ($null -eq $oldItemCount) { Remove-Item Env:GLASSDOCK_POC_ITEM_COUNT -ErrorAction SilentlyContinue }
@@ -154,19 +166,17 @@ foreach ($candidate in $Candidates) {
                 })
             }
             finally {
-                if ($process -and -not $process.HasExited) {
-                    Stop-Process -Id $process.Id -Force
-                    $process.WaitForExit()
-                }
+                if ($process) { [void](Stop-M0OwnedTestProcess $session $process) }
             }
-        }
-    }
-    finally {
-        if ($hadSettings) { Copy-Item -LiteralPath $backupPath -Destination $settingsPath -Force }
-        else { Remove-Item -LiteralPath $settingsPath -Force -ErrorAction SilentlyContinue }
     }
 }
 
 $results | Export-Csv -LiteralPath $csvPath -NoTypeInformation -Encoding utf8
 $results | Format-Table -AutoSize
 Write-Output "Evidence: $csvPath"
+    $runCompleted = $true
+}
+finally {
+    try { [void](Stop-M0InteractiveTestSession -Session $session -Completed $runCompleted) }
+    catch { Write-Warning "Interactive safety restoration failed; inspect $($session.EvidenceRoot): $($_.Exception.Message)" }
+}

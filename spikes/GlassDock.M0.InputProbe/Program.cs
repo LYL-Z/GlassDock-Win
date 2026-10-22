@@ -12,6 +12,9 @@ internal static class Program
         string? outputRoot = null;
         try
         {
+            if (args.Length > 0 && string.Equals(args[0], "--watchdog", StringComparison.OrdinalIgnoreCase))
+                return M0SafetyWatchdog.Run(args[1..]);
+
             var options = ParseArguments(args);
             if (options is null)
             {

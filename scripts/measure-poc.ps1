@@ -1,4 +1,6 @@
+[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
+    [switch]$ConfirmInteractiveTest,
     [Parameter(Mandatory)]
     [ValidateSet('Wpf', 'WinUI')]
     [string]$Candidate,
@@ -12,6 +14,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
+. (Join-Path $PSScriptRoot 'interactive-test-safety.ps1')
 
 $projectFolder = if ($Candidate -eq 'Wpf') {
     Join-Path $script:RepoRoot 'spikes\GlassDock.PoC.Wpf'
@@ -70,6 +73,15 @@ public static class GlassDockMeasurementNativeMethods
 '@
 Add-Type -TypeDefinition $nativeMethods
 
+$watchdogExe = Join-Path $script:RepoRoot 'spikes\GlassDock.M0.InputProbe\bin\Release\net10.0-windows10.0.19041.0\win-x64\GlassDock.M0.InputProbe.exe'
+if (-not (Test-Path -LiteralPath $watchdogExe)) { throw "Build the safety watchdog first: $watchdogExe" }
+Confirm-M0InteractiveTest $ConfirmInteractiveTest -Purpose "show a topmost $Candidate Dock window for idle resource sampling"
+if (-not $PSCmdlet.ShouldProcess('Current desktop', 'Launch visible topmost Dock PoC and collect local idle resource samples')) { return }
+$session = Start-M0InteractiveTestSession -RepoRoot $script:RepoRoot -LocalRoot $script:LocalRoot `
+    -Purpose "visible $Candidate topmost Dock window; CPU/memory samples only; no frame-time claim" `
+    -WatchdogExe $watchdogExe -TimeoutSeconds ([Math]::Min(1800, $DurationSeconds + 60))
+$runCompleted = $false
+
 $oldItemCount = $env:GLASSDOCK_POC_ITEM_COUNT
 $oldIconSize = $env:GLASSDOCK_POC_ICON_SIZE
 $oldStateRoot = $env:GLASSDOCK_POC_STATE_ROOT
@@ -78,7 +90,11 @@ try {
     $env:GLASSDOCK_POC_ITEM_COUNT = [string]$ItemCount
     $env:GLASSDOCK_POC_ICON_SIZE = [string]$IconSize
     $env:GLASSDOCK_POC_STATE_ROOT = Join-Path $script:LocalRoot "poc-state\$Candidate"
-    $process = Start-Process -FilePath $exePath -WorkingDirectory $projectFolder -PassThru
+    $process = Start-M0OwnedTestProcess -Session $session -FilePath $exePath -WorkingDirectory $projectFolder
+}
+catch {
+    try { [void](Stop-M0InteractiveTestSession -Session $session -Completed $false) } catch { }
+    throw
 }
 finally {
     $env:GLASSDOCK_POC_ITEM_COUNT = $oldItemCount
@@ -107,6 +123,7 @@ try {
     $rows = [System.Collections.Generic.List[object]]::new()
 
     while (([DateTime]::UtcNow - $startedAt).TotalSeconds -lt $DurationSeconds) {
+        Assert-M0InteractiveTestCanContinue $session
         Start-Sleep -Seconds 1
         $process.Refresh()
         if ($process.HasExited) { throw "$Candidate PoC exited while being measured." }
@@ -149,20 +166,13 @@ try {
         CsvPath = $csvPath
         FrameTime = 'Not measured by this script; use a WPR/WPA XAML frame trace for animation scenarios.'
     } | Format-List
+    $runCompleted = $true
 }
 finally {
-    if ($process -and -not $process.HasExited) {
-        $process.Refresh()
-        $window = [GlassDockMeasurementNativeMethods]::FindVisibleTopLevelWindow($process.Id)
-        if ($window -ne [IntPtr]::Zero) {
-            [void][GlassDockMeasurementNativeMethods]::PostMessage($window, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
-            if (-not $process.WaitForExit(5000)) {
-                Stop-Process -Id $process.Id -Force
-                $process.WaitForExit()
-            }
-        }
-        else {
-            Stop-Process -Id $process.Id -Force
-        }
+    if ($process) {
+        try { [void](Stop-M0OwnedTestProcess $session $process) }
+        catch { Write-Warning "Owned-process cleanup failed: $($_.Exception.Message)" }
     }
+    try { [void](Stop-M0InteractiveTestSession -Session $session -Completed $runCompleted) }
+    catch { Write-Warning "Interactive safety restoration failed; inspect $($session.EvidenceRoot): $($_.Exception.Message)" }
 }

@@ -1,4 +1,6 @@
+[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
+    [switch]$ConfirmInteractiveTest,
     [Parameter(Mandatory)]
     [ValidateSet('Wpf', 'WinUI')]
     [string]$Candidate,
@@ -12,6 +14,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
+. (Join-Path $PSScriptRoot 'interactive-test-safety.ps1')
 
 $projectFolder = if ($Candidate -eq 'Wpf') {
     Join-Path $script:RepoRoot 'spikes\GlassDock.PoC.Wpf'
@@ -54,6 +57,15 @@ public static class GlassDockGpuNativeMethods
 '@
 Add-Type -TypeDefinition $nativeMethods
 
+$watchdogExe = Join-Path $script:RepoRoot 'spikes\GlassDock.M0.InputProbe\bin\Release\net10.0-windows10.0.19041.0\win-x64\GlassDock.M0.InputProbe.exe'
+if (-not (Test-Path -LiteralPath $watchdogExe)) { throw "Build the safety watchdog first: $watchdogExe" }
+Confirm-M0InteractiveTest $ConfirmInteractiveTest -Purpose "show a topmost $Candidate Dock window for per-process GPU counter sampling"
+if (-not $PSCmdlet.ShouldProcess('Current desktop', 'Launch visible topmost Dock PoC and query per-process GPU counters')) { return }
+$session = Start-M0InteractiveTestSession -RepoRoot $script:RepoRoot -LocalRoot $script:LocalRoot `
+    -Purpose "visible $Candidate topmost Dock window; GPU engine/memory counters only" `
+    -WatchdogExe $watchdogExe -TimeoutSeconds ([Math]::Min(1800, (3 * $DurationSeconds) + 60))
+$runCompleted = $false
+
 $oldItemCount = $env:GLASSDOCK_POC_ITEM_COUNT
 $oldIconSize = $env:GLASSDOCK_POC_ICON_SIZE
 $oldStateRoot = $env:GLASSDOCK_POC_STATE_ROOT
@@ -62,7 +74,11 @@ try {
     $env:GLASSDOCK_POC_ITEM_COUNT = [string]$ItemCount
     $env:GLASSDOCK_POC_ICON_SIZE = [string]$IconSize
     $env:GLASSDOCK_POC_STATE_ROOT = Join-Path $script:LocalRoot "poc-state\$Candidate"
-    $process = Start-Process -FilePath $exePath -WorkingDirectory $projectFolder -PassThru
+    $process = Start-M0OwnedTestProcess -Session $session -FilePath $exePath -WorkingDirectory $projectFolder
+}
+catch {
+    try { [void](Stop-M0InteractiveTestSession -Session $session -Completed $false) } catch { }
+    throw
 }
 finally {
     if ($null -eq $oldItemCount) { Remove-Item Env:GLASSDOCK_POC_ITEM_COUNT -ErrorAction SilentlyContinue }
@@ -82,6 +98,7 @@ try {
         [pscustomobject]@{ Set='GPU Process Memory'; Path='\GPU Process Memory(*)\Shared Usage' }
     )
     foreach ($query in $counterQueries) {
+        Assert-M0InteractiveTestCanContinue $session
         $counterName = $query.Path.Substring($query.Path.LastIndexOf('\') + 1)
         $setInfo = Get-Counter -ListSet $query.Set -ErrorAction Stop
         $matchingPaths = @($setInfo.PathsWithInstances | Where-Object {
@@ -151,14 +168,10 @@ try {
         PeakSharedMemoryBytes = if ($memoryRows.Where({$_.Counter -eq 'Shared Usage'}).Count) { ($memoryRows.Where({$_.Counter -eq 'Shared Usage'}) | Measure-Object Value -Maximum).Maximum } else { $null }
         CsvPath = $csvPath
     } | Format-List
+    $runCompleted = $true
 }
 finally {
-    if ($process -and -not $process.HasExited) {
-        $window = [GlassDockGpuNativeMethods]::FindVisibleWindow($process.Id)
-        if ($window -ne [IntPtr]::Zero) {
-            [void][GlassDockGpuNativeMethods]::PostMessage($window, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
-            if (-not $process.WaitForExit(5000)) { Stop-Process -Id $process.Id -Force; $process.WaitForExit() }
-        }
-        else { Stop-Process -Id $process.Id -Force }
-    }
+    if ($process) { try { [void](Stop-M0OwnedTestProcess $session $process) } catch { Write-Warning "Owned-process cleanup failed: $($_.Exception.Message)" } }
+    try { [void](Stop-M0InteractiveTestSession -Session $session -Completed $runCompleted) }
+    catch { Write-Warning "Interactive safety restoration failed; inspect $($session.EvidenceRoot): $($_.Exception.Message)" }
 }

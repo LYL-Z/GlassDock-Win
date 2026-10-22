@@ -1,5 +1,8 @@
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
+    [switch]$ConfirmInteractiveTest,
+    [ValidateRange(10, 1800)]
+    [int]$TimeoutSeconds = 900,
     [ValidateSet('Wpf', 'WinUI')]
     [string[]]$Candidates = @('Wpf', 'WinUI'),
     [ValidateSet('Bottom', 'Left', 'Right')]
@@ -10,6 +13,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
+. (Join-Path $PSScriptRoot 'interactive-test-safety.ps1')
 
 $nativeMethods = @'
 using System;
@@ -101,12 +105,22 @@ public static class GlassDockM0Native
 Add-Type -TypeDefinition $nativeMethods
 
 $runId = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')
-$evidenceRoot = Join-Path $script:LocalRoot "evidence\m0-gap\input\$runId"
 $probeExe = Join-Path $script:RepoRoot 'spikes\GlassDock.M0.InputProbe\bin\Release\net10.0-windows10.0.19041.0\win-x64\GlassDock.M0.InputProbe.exe'
 if (-not (Test-Path -LiteralPath $probeExe)) { throw "Build the input probe first: $probeExe" }
-if (-not $PSCmdlet.ShouldProcess('Current desktop', 'Show a fullscreen test backdrop and inject synthetic mouse clicks and drags')) {
-    return
-}
+$existingProbe = @(Get-Process -Name 'GlassDock.M0.InputProbe' -ErrorAction SilentlyContinue | Where-Object {
+    try { [IO.Path]::GetFullPath($_.Path).Equals([IO.Path]::GetFullPath($probeExe), [StringComparison]::OrdinalIgnoreCase) }
+    catch { $false }
+})
+if ($existingProbe.Count -gt 0) { throw 'An InputProbe process from this build already exists. It was left untouched; close it manually before scheduling this test.' }
+Confirm-M0InteractiveTest $ConfirmInteractiveTest -Purpose 'full-screen input sink with synthetic click and drag injection'
+if (-not $PSCmdlet.ShouldProcess('Current desktop', 'Show a fullscreen test backdrop and inject synthetic mouse clicks and drags')) { return }
+$session = Start-M0InteractiveTestSession -RepoRoot $script:RepoRoot -LocalRoot $script:LocalRoot `
+    -Purpose 'full-screen input routing: WPF and WinUI 3, selected edges, synthetic left click/double-click/drag' `
+    -WatchdogExe $probeExe -TimeoutSeconds $TimeoutSeconds
+$evidenceRoot = Join-Path $script:LocalRoot "evidence\m0-gap\input\$runId"
+New-Item -ItemType Directory -Force -Path $evidenceRoot | Out-Null
+$script:InteractiveSafetySession = $session
+$runCompleted = $false
 
 $results = [System.Collections.Generic.List[object]]::new()
 $probeProcess = $null
@@ -130,37 +144,44 @@ function Set-DockScenario([string]$Root, [string]$Scenario) {
 }
 
 function Invoke-MouseClick([int]$X, [int]$Y, [int]$Count = 1) {
+    Assert-M0InteractiveTestCanContinue $script:InteractiveSafetySession
     [GlassDockM0Native]::MoveTo($X, $Y)
     Start-Sleep -Milliseconds 80
     for ($click = 0; $click -lt $Count; $click++) {
+        Assert-M0InteractiveTestCanContinue $script:InteractiveSafetySession
+        Set-M0InteractiveMouseButtonState $script:InteractiveSafetySession $true
         [GlassDockM0Native]::LeftDown()
         Start-Sleep -Milliseconds 45
-        [GlassDockM0Native]::LeftUp()
+        try { [GlassDockM0Native]::LeftUp() }
+        finally { Set-M0InteractiveMouseButtonState $script:InteractiveSafetySession $false }
         if ($click + 1 -lt $Count) { Start-Sleep -Milliseconds 110 }
     }
 }
 
 function Invoke-MouseDrag([int]$FromX, [int]$FromY, [int]$ToX, [int]$ToY) {
+    Assert-M0InteractiveTestCanContinue $script:InteractiveSafetySession
     [GlassDockM0Native]::MoveTo($FromX, $FromY)
     Start-Sleep -Milliseconds 80
+    Assert-M0InteractiveTestCanContinue $script:InteractiveSafetySession
+    Set-M0InteractiveMouseButtonState $script:InteractiveSafetySession $true
     [GlassDockM0Native]::LeftDown()
-    Start-Sleep -Milliseconds 80
-    [GlassDockM0Native]::MoveTo([int](($FromX + $ToX) / 2), [int](($FromY + $ToY) / 2))
-    Start-Sleep -Milliseconds 80
-    [GlassDockM0Native]::MoveTo($ToX, $ToY)
-    Start-Sleep -Milliseconds 80
-    [GlassDockM0Native]::LeftUp()
+    try {
+        Start-Sleep -Milliseconds 80
+        Assert-M0InteractiveTestCanContinue $script:InteractiveSafetySession
+        [GlassDockM0Native]::MoveTo([int](($FromX + $ToX) / 2), [int](($FromY + $ToY) / 2))
+        Start-Sleep -Milliseconds 80
+        Assert-M0InteractiveTestCanContinue $script:InteractiveSafetySession
+        [GlassDockM0Native]::MoveTo($ToX, $ToY)
+        Start-Sleep -Milliseconds 80
+    }
+    finally {
+        [GlassDockM0Native]::LeftUp()
+        Set-M0InteractiveMouseButtonState $script:InteractiveSafetySession $false
+    }
 }
 
 try {
     New-Item -ItemType Directory -Force -Path $evidenceRoot | Out-Null
-    foreach ($existing in @(Get-Process -Name 'GlassDock.M0.InputProbe' -ErrorAction SilentlyContinue)) {
-        $existingPath = $existing.Path
-        if ($existingPath -and $existingPath.StartsWith($script:RepoRoot, [StringComparison]::OrdinalIgnoreCase)) {
-            Stop-Process -Id $existing.Id -Force
-            $existing.WaitForExit()
-        }
-    }
 
     foreach ($candidate in $Candidates) {
         $projectFolder = Join-Path $script:RepoRoot "spikes\GlassDock.PoC.$candidate"
@@ -181,7 +202,8 @@ try {
             $dockTracePath = Join-Path $stateRoot 'm0-input-events.jsonl'
             $dockLogPath = Join-Path $stateRoot 'logs\dock.log'
 
-            $probeProcess = Start-Process -FilePath $probeExe -ArgumentList @('--theme', $Theme, '--output-root', $sinkRoot) -PassThru
+            Assert-M0InteractiveTestCanContinue $session
+            $probeProcess = Start-M0OwnedTestProcess -Session $session -FilePath $probeExe -ArgumentList @('--theme', $Theme, '--output-root', $sinkRoot)
             for ($attempt = 0; $attempt -lt 80 -and -not (Test-Path -LiteralPath $readyPath); $attempt++) { Start-Sleep -Milliseconds 100 }
             if (-not (Test-Path -LiteralPath $readyPath)) { throw "Input probe did not become ready: $candidate/$edge" }
             $ready = Get-Content -LiteralPath $readyPath -Raw | ConvertFrom-Json
@@ -191,7 +213,7 @@ try {
             $env:GLASSDOCK_M0_INPUT_TRACE = '1'
             $env:GLASSDOCK_POC_ITEM_COUNT = '8'
             $env:GLASSDOCK_POC_ICON_SIZE = '58'
-            $candidateProcess = Start-Process -FilePath $pocExe -WorkingDirectory $projectFolder -PassThru
+            $candidateProcess = Start-M0OwnedTestProcess -Session $session -FilePath $pocExe -WorkingDirectory $projectFolder
             for ($attempt = 0; $attempt -lt 100; $attempt++) {
                 $candidateProcess.Refresh()
                 if ($candidateProcess.HasExited) { throw "$candidate exited early for $edge (exit $($candidateProcess.ExitCode))." }
@@ -242,6 +264,7 @@ try {
             }
 
             foreach ($test in $tests) {
+                Assert-M0InteractiveTestCanContinue $session
                 $scenario = $test.Name
                 Set-Scenario $sinkRoot $scenario
                 Set-DockScenario $stateRoot $scenario
@@ -283,21 +306,30 @@ try {
                 })
             }
 
-            if ($candidateProcess -and -not $candidateProcess.HasExited) { Stop-Process -Id $candidateProcess.Id -Force; $candidateProcess.WaitForExit() }
+            if ($candidateProcess) { [void](Stop-M0OwnedTestProcess $session $candidateProcess) }
             $candidateProcess = $null
-            if ($probeProcess -and -not $probeProcess.HasExited) { Stop-Process -Id $probeProcess.Id -Force; $probeProcess.WaitForExit() }
+            if ($probeProcess) { [void](Stop-M0OwnedTestProcess $session $probeProcess) }
             $probeProcess = $null
             $env:GLASSDOCK_POC_STATE_ROOT = $oldStateRoot
         }
     }
+    $runCompleted = $true
 }
 finally {
-    if ($candidateProcess -and -not $candidateProcess.HasExited) { Stop-Process -Id $candidateProcess.Id -Force; $candidateProcess.WaitForExit() }
-    if ($probeProcess -and -not $probeProcess.HasExited) { Stop-Process -Id $probeProcess.Id -Force; $probeProcess.WaitForExit() }
-    if ($null -eq $oldStateRoot) { Remove-Item Env:GLASSDOCK_POC_STATE_ROOT -ErrorAction SilentlyContinue } else { $env:GLASSDOCK_POC_STATE_ROOT = $oldStateRoot }
-    if ($null -eq $oldTrace) { Remove-Item Env:GLASSDOCK_M0_INPUT_TRACE -ErrorAction SilentlyContinue } else { $env:GLASSDOCK_M0_INPUT_TRACE = $oldTrace }
-    if ($null -eq $oldItemCount) { Remove-Item Env:GLASSDOCK_POC_ITEM_COUNT -ErrorAction SilentlyContinue } else { $env:GLASSDOCK_POC_ITEM_COUNT = $oldItemCount }
-    if ($null -eq $oldIconSize) { Remove-Item Env:GLASSDOCK_POC_ICON_SIZE -ErrorAction SilentlyContinue } else { $env:GLASSDOCK_POC_ICON_SIZE = $oldIconSize }
+    foreach ($ownedProcess in @($candidateProcess, $probeProcess)) {
+        if ($ownedProcess) { try { [void](Stop-M0OwnedTestProcess $session $ownedProcess) } catch { Write-Warning "Owned-process cleanup failed: $($_.Exception.Message)" } }
+    }
+    foreach ($entry in @(
+        @{ Name='GLASSDOCK_POC_STATE_ROOT'; Value=$oldStateRoot },
+        @{ Name='GLASSDOCK_M0_INPUT_TRACE'; Value=$oldTrace },
+        @{ Name='GLASSDOCK_POC_ITEM_COUNT'; Value=$oldItemCount },
+        @{ Name='GLASSDOCK_POC_ICON_SIZE'; Value=$oldIconSize }
+    )) {
+        if ($null -eq $entry.Value) { Remove-Item "Env:$($entry.Name)" -ErrorAction SilentlyContinue }
+        else { [Environment]::SetEnvironmentVariable($entry.Name, [string]$entry.Value, 'Process') }
+    }
+    try { [void](Stop-M0InteractiveTestSession -Session $session -Completed $runCompleted) }
+    catch { Write-Warning "Interactive safety restoration failed; inspect $($session.EvidenceRoot): $($_.Exception.Message)" }
 }
 
 $csvPath = Join-Path $evidenceRoot 'actual-input-results.csv'

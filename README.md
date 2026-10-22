@@ -27,8 +27,12 @@ The scripts place .NET CLI state, NuGet packages, HTTP cache, and temporary file
 
 ## Boundaries
 
-- This public repository was created at the user's request. The `LICENSE` placeholder remains unchanged; public visibility does not grant a reuse license.
+- This repository is public. GitHub's Terms of Service permit users to view and fork it through GitHub; that does not grant broader rights to reuse, modify, or redistribute the code outside those service functions. The `LICENSE` placeholder is unchanged while the owner decides whether to grant a project license. Its current wording should be reviewed because its broad “Do not redistribute, publish” language does not describe GitHub's view/fork permission; no change is being made to `LICENSE` in this M0 work.
 - Machine-local `.local`, `.tools`, `bin`, and `obj` contents are excluded from version control. They contain caches, generated output, and local test evidence; some evidence includes private desktop context.
 - No Apple system assets or unlicensed application artwork are included.
 - M0 is a technical spike, not a 1:1 visual acceptance or release claim.
 - The production desktop entry point remains intentionally empty until the M0 framework gate passes.
+
+## M0 interaction test safety
+
+Scripts that cover the desktop or inject test input are not part of build or unit-test commands. They require `-ConfirmInteractiveTest`, a typed confirmation phrase, and PowerShell's high-impact `ShouldProcess` confirmation. Their watchdog listens for `Ctrl+Shift+F12`, enforces a timeout, and stops only processes whose PID, executable path, and start time were recorded for that run. Do not run these scripts until the owner has approved the specific test window and its desktop impact.
