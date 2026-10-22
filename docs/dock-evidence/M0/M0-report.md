@@ -3,7 +3,7 @@
 - 日期：2026-10-22
 - 项目：D:\MacOS\GlassDock-Win
 - 状态：**M0 未验收通过；P0 缺口仍在；不进入 M1，不冻结生产技术路线。**
-- 本轮边界：更新报告/矩阵/路线复评；完成精确提交 `3a6ca88b6925f60ecea5971f8781b7482153ed0c` 的 D 盘独立克隆；静态审查 WinUI 命中路径；实现被动 DWM 探针及交互测试安全看门狗；本机 Release 构建和单测通过。没有运行桌面交互、输入注入、全屏、显示设置或提权操作。代码/doc 修改在本轮结束前尚未推送；当前远端已确认通过的 CI 仅针对原始提交，后续修改需要各自的精确 SHA Actions 结果。
+- 本轮边界：更新报告/矩阵/路线复评；完成精确提交 `3a6ca88b6925f60ecea5971f8781b7482153ed0c` 的 D 盘独立克隆；静态审查 WinUI 命中路径；实现被动 DWM 探针及交互测试安全看门狗；本机 Release 构建和单测通过。没有运行桌面交互、输入注入、全屏、显示设置或提权操作。安全与探针提交 `b4d78b8be3f47f08febbf261c720e6dc318e170a` 已推送；GitHub Actions 精确 SHA run `39800785724` 已完成，Build 和 Test 均成功。此后仅进行文档校准，未再改代码。
 
 ## 1. 当前环境与证据边界
 
@@ -136,9 +136,9 @@ WPF 使用 `AllowsTransparency=True` 并另有 `WM_NCHITTEST` 圆角逻辑。它
 
 环境和日志：`D:\MacOS\GlassDock-Win\.local\clean-clones\3a6ca88b6925f60ecea5971f8781b7482153ed0c\.local\evidence\clean-clone\`（`dotnet-info.txt`、`environment.json`、`restore.log`、`build-final.log`、`test-final.log`、`summary.txt`）。这证明指定旧提交 clean clone，不代表本轮未提交改动的 clean clone。
 
-### GitHub Actions（基线提交）
+### GitHub Actions（精确提交）
 
-用户已确认 M0-19 的基线远程 CI 通过。本轮重新读取 GitHub REST 结果：提交 `3a6ca88b6925f60ecea5971f8781b7482153ed0c` 的 push workflow `Windows CI` 已完成，run `39767098768`，结论 `success`；唯一 job `build-and-test` 成功，Build 和 Test 步骤均 `success`。[实际运行记录](https://github.com/LYL-Z/GlassDock-Win/actions/runs/39767098768)。本轮文件修改尚未获得独立 Actions 结果；提交并推送后应检查该精确新 SHA。工作流文件存在、原基线通过、当前改动远程通过是三件不同的事。
+基线提交 `3a6ca88b6925f60ecea5971f8781b7482153ed0c` 的 push workflow `Windows CI` 已完成，run `39767098768`，结论 `success`；唯一 job `build-and-test` 成功，Build 和 Test 步骤均 `success`。[基线运行记录](https://github.com/LYL-Z/GlassDock-Win/actions/runs/39767098768)。本轮安全与探针提交 `b4d78b8be3f47f08febbf261c720e6dc318e170a` 的精确 SHA run `39800785724` 也已完成，结论 `success`；job `build-and-test` 的 Build、Test 步骤均 `success`。[本轮精确 SHA 运行记录](https://github.com/LYL-Z/GlassDock-Win/actions/runs/39800785724)。工作流文件存在、基线通过、当前实现提交通过是不同的证据，现已分别记录。
 
 ## 9. 仓库公开与许可证状态
 

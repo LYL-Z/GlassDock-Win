@@ -23,7 +23,7 @@ Then build and test from this directory:
 .\scripts\test.ps1 -NoRestore
 ```
 
-The scripts place .NET CLI state, NuGet packages, HTTP cache, and temporary files under `.local` in this checkout. The WinUI spike is unpackaged and depends on the Windows App Runtime installed on the machine. It does not enable Windows Developer Mode or require an elevated process. Run `scripts/measure-poc.ps1` for a reproducible idle CPU/memory sample; it briefly displays the selected topmost PoC and closes only the process it started. This script does not measure frame time. The interactive input test in `scripts/verify-poc-input.ps1` covers the desktop with a controlled fullscreen backdrop and injects synthetic mouse input; it requires high-impact confirmation and should only run after the user agrees.
+The scripts place .NET CLI state, NuGet packages, HTTP cache, and temporary files under `.local` in this checkout. The WinUI spike is unpackaged and depends on the Windows App Runtime installed on the machine. It does not enable Windows Developer Mode or require an elevated process. `scripts/measure-poc.ps1` collects an idle CPU/memory sample, but it displays the selected topmost PoC and can change foreground focus; it requires `-ConfirmInteractiveTest`, a typed phrase, and PowerShell's high-impact confirmation. It does not measure frame time. The interactive input test in `scripts/verify-poc-input.ps1` covers the desktop with a controlled fullscreen backdrop and injects synthetic mouse input; run either script only after the owner approves its specific desktop impact.
 
 ## Boundaries
 
