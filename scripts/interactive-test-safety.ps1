@@ -50,11 +50,18 @@ $script:M0InteractiveTestEnvironmentNames = @(
 function Confirm-M0InteractiveTest {
     param(
         [Parameter(Mandatory)][switch]$Confirmed,
-        [Parameter(Mandatory)][string]$Purpose
+        [Parameter(Mandatory)][string]$Purpose,
+        [string]$AuthorizationPhrase
     )
 
     if (-not $Confirmed) {
         throw "Interactive test was not started. Re-run with -ConfirmInteractiveTest, then type the exact confirmation phrase when prompted. Purpose: $Purpose"
+    }
+    if ($PSBoundParameters.ContainsKey('AuthorizationPhrase')) {
+        if ($AuthorizationPhrase -cne 'RUN M0 DESKTOP TEST') {
+            throw 'Interactive test was not started because the exact confirmation phrase was not supplied.'
+        }
+        return
     }
     $answer = Read-Host "Desktop-impacting M0 test: $Purpose. Emergency stop: Ctrl+Shift+F12. Type RUN M0 DESKTOP TEST to continue"
     if ($answer -cne 'RUN M0 DESKTOP TEST') {
