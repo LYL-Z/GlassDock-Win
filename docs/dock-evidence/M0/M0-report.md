@@ -6,6 +6,7 @@
 - 桌面测试证据基线提交 `8be36ea111e35875dbc3ff8cab96474a36e6d413` 的 Windows CI run `39896333410` Build/Test 成功。本轮架构探针代码提交 `8f6ca23ecb159dd20e71e0ef303a691cda9293ab` 的 run `39924864083` Build/Test 也成功；两个提交均不代表 M0 整体验收通过。
 - 本次实际执行了已获批准的输入路由、WGC 视觉、窗口共存、显示刷新、托盘/配置恢复及 DXGI 独占全屏测试。未提权、未启动 M1、未改 LICENSE、未创建 Release。
 - 2026-10-23 本次续作先实施默认关闭的系统材质/非激活启动候选、应用侧性能记录器、托盘命令路由单测及文档/脚本修订；收到用户指定短语 RUN M0 DESKTOP TEST 后，仅执行本次获批的 18 场景 WGC 视觉矩阵。没有追加输入、全屏、显示模式或其他交互测试。
+- 最终有界实验（2026-10-23，`RUN M0 FINAL DESKTOP TEST`）仅完成独立 Composition blur 对照和 WinUI Dock 捕获；WPF 非激活窗口观测导致脚本中止，未运行 WinUI 非激活或 DXGI companion。最新阶段决策见第 12 节。
 
 ## 1. 环境与证据边界
 
@@ -105,7 +106,7 @@ WinUI 候选实现调用公开 User32 `SetWindowRgn`，用公开 GDI `CreateRoun
 | 2026-10-23 精确 SHA 远程 CI | 提交 `8f6ca23ecb159dd20e71e0ef303a691cda9293ab`；run `39924864083`；Windows CI `build-and-test`、Build 和 Test 步骤均 completed/success；API 状态快照 `D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\architecture-20261023\remote-ci.json`；[精确运行](https://github.com/LYL-Z/GlassDock-Win/actions/runs/39924864083) |
 | 差异/边界复核 | `git diff --check` PASS；LICENSE 与 HEAD 无差异；凭据模式扫描 16 个改动文件为 0 命中；检查时无 GlassDock PoC 进程；记录在同一目录的 `diff-check.txt`、`license-unchanged.txt`、`changed-files-review.txt`、`process-check.txt` |
 | DWM 被动探针 | PASS；16/16 `S_OK`；仅全局合成指标 |
-| 桌面测试恢复 | 最近一次视觉候选恢复检查 14/14 PASS；点击路由候选 12/12 PASS；无测试进程残留 |
+| 历史桌面测试恢复 | 此前视觉候选 14/14、点击路由候选 12/12；不代表最终有界实验恢复通过 |
 
 使用命令：
 
@@ -162,3 +163,22 @@ WPF 默认透明路由证据较强，但其独占全屏窗口虽保持 DXGI excl
 - 托盘/配置：`D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\tray-config\`
 - 120/240Hz 模式：`D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\dpi-refresh\refresh-20261022T161000Z\refresh-results.json`
 - 本次架构续作本地构建/18 项单测/20 个脚本解析与边界复核：`D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\architecture-20261023\`
+## 12. 最终有界桌面实验与 M0 阶段决策（2026-10-23）
+
+用户输入授权短语后，只运行一次独立 Composition blur positive control 与项目 WinUI Dock 对照：Bottom、58 DIP、当前 3840×2400/250% 环境，两张 WGC 区域图保存在 D 盘 `.local`。没有保存全屏桌面帧，也没有进行鼠标/键盘输入注入、显示设置改变、独占全屏或游戏测试。
+
+- 独立控制窗口中的黑白 XAML 条纹与圆角模糊面板属于同一 HWND/visual tree；条纹在面板内明显混合为灰色，面板外仍清晰。**同窗 Composition blur effect PASS**，但这不证明桌面或另一个 HWND 的像素可被采样。`CompositionBackdropBrush` + `GaussianBlurEffect` 状态 HRESULT 是 `0x00000000`。
+- 项目 Dock brush 对象也创建成功，但捕获图里的面板没有显示对下层条纹窗口的可辨采样/模糊，呈近白实底；8 个静态图标/标签可见。**当前跨窗 Dock backdrop 集成 FAIL**。原因未进一步细分为 system-backdrop 配置、XAML 视觉层级或窗口宿主兼容；不得据此写成 Composition API 不支持或 WinUI 整体不可能。
+- WPF 非激活候选有启动日志；脚本在 12 秒内未通过 `Process.MainWindowHandle` 找到可见 HWND 而中止。该测试观察为 **BLOCKED**，不是 Dock 功能 FAIL。WinUI 非激活候选和随后 DXGI 测试均未执行。
+- `post-state.json` 的 `Completed=false`、`RestorePassed=false`。与桌面直接相关的登记进程清理、原前台 HWND/PID、指针、任务栏、显示边界、watchdog 退出均记录通过；失败的是测试进程环境变量未被 harness 回滚。运行后项目路径未发现 WPF/WinUI/WGC 测试进程。本次没有报告桌面状态变化。
+- 按“首个脚本失败后停止”的授权约束，没有启动 DXGI companion，也没有重跑/扩展视觉场景。脚本的环境回滚和 PID 枚举代码已静态修正，未再执行桌面窗口验证。
+
+本轮证据：`D:\MacOS\GlassDock-Win\.local\evidence\m0-final\20261023T111923Z-94bc33e6\`；进程与恢复状态：`D:\MacOS\GlassDock-Win\.local\evidence\interactive-tests\4b4d59d507ca4aa1be00685e3f38d75a\post-state.json`。私人/完整桌面图未提交 Git。
+
+**最终结论：NO-GO；M0 不进入 M1，技术路线不冻结。** Composition 在独立窗口的 blur 能力有正面证据，但当前目标 Dock HWND 没有真实模糊；非激活焦点行为也未产生有效观测结果。当前必要的最小后续动作是：修正后的 harness 通过静态检查后，在新的单独授权下，仅对目标 Dock HWND 做一次 window-level/system-backdrop 实验并确认非激活窗口可见 HWND；仍无 blur 或无法保焦点则停止当前路线，再评估 WPF Visual Layer 与原生后端。不得追加视觉矩阵。
+
+本轮本地 Release solution build（11 项目、0 warning/error）和 Core 单测（18/18）在桌面实验前通过；之前记录的远程 CI 只适用于它所列的旧提交 SHA。此次工作树变更未提交、未推送、没有精确 SHA 的 GitHub Actions 结果。LICENSE、Git 历史和 Release 状态均未改变。
+
+# 历史报告说明
+
+> 本报告按原始 M0 全量门槛记录，保留其原始状态与结论。2026-10-23 的范围变更没有追认原始 M0 全项通过。当前决策状态、有限收尾实验和逐项阶段迁移以 [M0 最终技术决策报告](M0-final-technical-decision.md)、[范围变更记录](M0-scope-change-2026-10-23.md) 和 [迁移矩阵](M0-to-M1-requirement-migration.md) 为准。

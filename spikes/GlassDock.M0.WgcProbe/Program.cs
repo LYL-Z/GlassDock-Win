@@ -37,9 +37,57 @@ internal static class Program
                 return 0;
             }
 
+            if (args.Length == 3 && args[0] == "capture-monitor-region")
+            {
+                if (!GraphicsCaptureSession.IsSupported())
+                    throw new InvalidOperationException("Windows.Graphics.Capture reports unsupported.");
+
+                var regionOutputPath = Path.GetFullPath(args[2]);
+                if (!regionOutputPath.StartsWith("D:\\", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Capture output is restricted to D:.");
+                if (!long.TryParse(args[1].Replace("0x", "", StringComparison.OrdinalIgnoreCase),
+                        System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out var regionHwndValue) || regionHwndValue == 0)
+                    throw new ArgumentException("A non-zero hexadecimal HWND is required.");
+                Directory.CreateDirectory(Path.GetDirectoryName(regionOutputPath)!);
+                CaptureMonitorRegion(regionOutputPath, new nint(regionHwndValue));
+                return 0;
+            }
+
+            if (args.Length == 6 && args[0] == "capture-monitor-crop")
+            {
+                if (!GraphicsCaptureSession.IsSupported())
+                    throw new InvalidOperationException("Windows.Graphics.Capture reports unsupported.");
+
+                var cropOutputPath = Path.GetFullPath(args[5]);
+                if (!cropOutputPath.StartsWith("D:\\", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Capture output is restricted to D:.");
+                if (!int.TryParse(args[1], out var left) || !int.TryParse(args[2], out var top) ||
+                    !int.TryParse(args[3], out var width) || !int.TryParse(args[4], out var height) || width <= 0 || height <= 0)
+                    throw new ArgumentException("Crop coordinates must be integer screen pixels with positive width and height.");
+                Directory.CreateDirectory(Path.GetDirectoryName(cropOutputPath)!);
+                CaptureMonitorCrop(cropOutputPath, Rectangle.FromLTRB(left, top, checked(left + width), checked(top + height)), nint.Zero);
+                return 0;
+            }
+
+            if (args.Length == 3 && args[0] == "capture-window")
+            {
+                if (!GraphicsCaptureSession.IsSupported())
+                    throw new InvalidOperationException("Windows.Graphics.Capture reports unsupported.");
+
+                var windowOutputPath = Path.GetFullPath(args[2]);
+                if (!windowOutputPath.StartsWith("D:\\", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Capture output is restricted to D:.");
+                if (!long.TryParse(args[1].Replace("0x", "", StringComparison.OrdinalIgnoreCase),
+                        System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out var hwndValue) || hwndValue == 0)
+                    throw new ArgumentException("A non-zero hexadecimal HWND is required.");
+                Directory.CreateDirectory(Path.GetDirectoryName(windowOutputPath)!);
+                CaptureWindowFrame(windowOutputPath, new nint(hwndValue));
+                return 0;
+            }
+
             if (args.Length != 4 || args[0] != "capture")
             {
-                Console.Error.WriteLine("Usage: WgcProbe capture <D:\\output.png> <input-probe-ready.json> <dock-pid> | capture-monitor <D:\\output.png>");
+                Console.Error.WriteLine("Usage: WgcProbe capture <D:\\output.png> <input-probe-ready.json> <dock-pid> | capture-monitor <D:\\output.png> | capture-monitor-region <hwnd-hex> <D:\\output.png> | capture-monitor-crop <left> <top> <width> <height> <D:\\output.png> | capture-window <hwnd-hex> <D:\\output.png>");
                 return 2;
             }
 
@@ -66,7 +114,9 @@ internal static class Program
             {
                 try
                 {
-                    var candidatePath = Path.GetFullPath(args[1]);
+                    var errorPathArgument = args[0] == "capture-monitor-crop" && args.Length > 5 ? args[5] :
+                        args[0] is "capture-window" or "capture-monitor-region" && args.Length > 2 ? args[2] : args[1];
+                    var candidatePath = Path.GetFullPath(errorPathArgument);
                     if (candidatePath.StartsWith("D:\\", StringComparison.OrdinalIgnoreCase))
                         File.WriteAllText(Path.ChangeExtension(candidatePath, ".capture-error.txt"), ex.ToString());
                 }
@@ -209,6 +259,156 @@ internal static class Program
         }
     }
 
+    private static void CaptureWindowFrame(string outputPath, nint hwnd)
+    {
+        if (!IsWindow(hwnd) || !IsWindowVisible(hwnd))
+            throw new InvalidOperationException($"The requested capture HWND is missing or hidden: 0x{hwnd.ToInt64():X}.");
+
+        var item = CreateForWindow(hwnd);
+        using var d3dDevice = new SharpDX.Direct3D11.Device(DriverType.Hardware, DeviceCreationFlags.BgraSupport);
+        using var dxgiDevice = d3dDevice.QueryInterface<SharpDX.DXGI.Device>();
+        var hr = CreateDirect3D11DeviceFromDXGIDevice(dxgiDevice.NativePointer, out var devicePointer);
+        Marshal.ThrowExceptionForHR(unchecked((int)hr));
+
+        IDirect3DDevice winRtDevice;
+        try
+        {
+            winRtDevice = WinRT.MarshalInterface<IDirect3DDevice>.FromAbi(devicePointer);
+        }
+        finally
+        {
+            Marshal.Release(devicePointer);
+        }
+
+        using (var framePool = Direct3D11CaptureFramePool.CreateFreeThreaded(
+                   winRtDevice,
+                   DirectXPixelFormat.B8G8R8A8UIntNormalized,
+                   2,
+                   item.Size))
+        using (var session = framePool.CreateCaptureSession(item))
+        using (var frameReady = new ManualResetEventSlim())
+        {
+            framePool.FrameArrived += (_, _) => frameReady.Set();
+            session.StartCapture();
+            if (!frameReady.Wait(TimeSpan.FromSeconds(5)))
+                throw new TimeoutException("No Windows.Graphics.Capture window frame arrived within 5 seconds.");
+
+            using var frame = framePool.TryGetNextFrame();
+            if (frame is null)
+                throw new InvalidOperationException("FrameArrived fired, but TryGetNextFrame returned null.");
+            using var texture = GetTexture(frame.Surface);
+            using var bitmap = CopyTextureToBitmap(d3dDevice, texture);
+            bitmap.Save(outputPath, ImageFormat.Png);
+
+            var metadata = new
+            {
+                CapturedAtUtc = DateTimeOffset.UtcNow,
+                CaptureApi = "Windows.Graphics.Capture / Direct3D11CaptureFramePool",
+                CaptureScope = $"Window-only DWM-composed frame for HWND 0x{hwnd.ToInt64():X}; not desktop capture and not physical scanout.",
+                WindowHandle = $"0x{hwnd.ToInt64():X}",
+                FrameContentSize = new { frame.ContentSize.Width, frame.ContentSize.Height },
+                FrameSystemRelativeTime = frame.SystemRelativeTime.ToString(),
+                OutputPath = outputPath,
+                OutputSha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(outputPath)))
+            };
+            File.WriteAllText(Path.ChangeExtension(outputPath, ".capture.json"),
+                System.Text.Json.JsonSerializer.Serialize(metadata, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+        }
+    }
+
+    private static void CaptureMonitorRegion(string outputPath, nint targetWindow)
+    {
+        if (!IsWindow(targetWindow) || !IsWindowVisible(targetWindow))
+            throw new InvalidOperationException($"The requested crop HWND is missing or hidden: 0x{targetWindow.ToInt64():X}.");
+
+        if (!GetWindowRect(targetWindow, out var targetBoundsNative))
+            throw new InvalidOperationException($"GetWindowRect failed for crop HWND; Win32={Marshal.GetLastWin32Error()}.");
+
+        const int marginPixels = 160;
+        var requested = Rectangle.FromLTRB(
+            targetBoundsNative.Left - marginPixels,
+            targetBoundsNative.Top - marginPixels,
+            targetBoundsNative.Right + marginPixels,
+            targetBoundsNative.Bottom + marginPixels);
+        CaptureMonitorCrop(outputPath, requested, targetWindow);
+    }
+
+    private static void CaptureMonitorCrop(string outputPath, Rectangle requested, nint targetWindow)
+    {
+        var monitorBounds = Screen.PrimaryScreen?.Bounds ?? throw new InvalidOperationException("Primary monitor was not found.");
+        var monitor = MonitorFromPoint(new PointNative(monitorBounds.Left + 1, monitorBounds.Top + 1), 1);
+        if (monitor == nint.Zero)
+            throw new InvalidOperationException("MonitorFromPoint failed for the primary captured monitor.");
+        if (targetWindow != nint.Zero && (!IsWindow(targetWindow) || !IsWindowVisible(targetWindow) || MonitorFromWindow(targetWindow, 2) != monitor))
+            throw new InvalidOperationException("The crop HWND is missing, hidden, or not on the primary captured monitor.");
+
+        var cropBounds = Rectangle.Intersect(monitorBounds, requested);
+        if (cropBounds.Width <= 0 || cropBounds.Height <= 0)
+            throw new InvalidOperationException("The target window crop does not intersect the primary monitor.");
+
+        var item = CreateForMonitor(monitor);
+        using var d3dDevice = new SharpDX.Direct3D11.Device(DriverType.Hardware, DeviceCreationFlags.BgraSupport);
+        using var dxgiDevice = d3dDevice.QueryInterface<SharpDX.DXGI.Device>();
+        var hr = CreateDirect3D11DeviceFromDXGIDevice(dxgiDevice.NativePointer, out var devicePointer);
+        Marshal.ThrowExceptionForHR(unchecked((int)hr));
+
+        IDirect3DDevice winRtDevice;
+        try
+        {
+            winRtDevice = WinRT.MarshalInterface<IDirect3DDevice>.FromAbi(devicePointer);
+        }
+        finally
+        {
+            Marshal.Release(devicePointer);
+        }
+
+        using (var framePool = Direct3D11CaptureFramePool.CreateFreeThreaded(
+                   winRtDevice,
+                   DirectXPixelFormat.B8G8R8A8UIntNormalized,
+                   2,
+                   item.Size))
+        using (var session = framePool.CreateCaptureSession(item))
+        using (var frameReady = new ManualResetEventSlim())
+        {
+            framePool.FrameArrived += (_, _) => frameReady.Set();
+            session.StartCapture();
+            if (!frameReady.Wait(TimeSpan.FromSeconds(5)))
+                throw new TimeoutException("No Windows.Graphics.Capture monitor frame arrived within 5 seconds.");
+
+            using var frame = framePool.TryGetNextFrame();
+            if (frame is null)
+                throw new InvalidOperationException("FrameArrived fired, but TryGetNextFrame returned null.");
+            using var texture = GetTexture(frame.Surface);
+            using var bitmap = CopyTextureToBitmap(d3dDevice, texture);
+            if (bitmap.Width != monitorBounds.Width || bitmap.Height != monitorBounds.Height)
+                throw new InvalidOperationException($"WGC frame size {bitmap.Width}x{bitmap.Height} does not match physical monitor bounds {monitorBounds.Width}x{monitorBounds.Height}; refusing an ambiguous crop.");
+            var frameCrop = new Rectangle(
+                cropBounds.X - monitorBounds.X,
+                cropBounds.Y - monitorBounds.Y,
+                cropBounds.Width,
+                cropBounds.Height);
+            using var cropped = bitmap.Clone(frameCrop, PixelFormat.Format32bppArgb);
+            cropped.Save(outputPath, ImageFormat.Png);
+
+            var metadata = new
+            {
+                CapturedAtUtc = DateTimeOffset.UtcNow,
+                CaptureApi = "Windows.Graphics.Capture / Direct3D11CaptureFramePool",
+                CaptureScope = "DWM-composed primary-monitor frame cropped in memory; only the requested controlled region is persisted.",
+                TargetHwnd = targetWindow == nint.Zero ? null : $"0x{targetWindow.ToInt64():X}",
+                RequestedCropBoundsPx = new { requested.Left, requested.Top, requested.Width, requested.Height },
+                MonitorBoundsPx = new { monitorBounds.Left, monitorBounds.Top, monitorBounds.Width, monitorBounds.Height },
+                PersistedCropBoundsPx = new { cropBounds.Left, cropBounds.Top, cropBounds.Width, cropBounds.Height },
+                FrameContentSize = new { frame.ContentSize.Width, frame.ContentSize.Height },
+                FrameSystemRelativeTime = frame.SystemRelativeTime.ToString(),
+                FrameSha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(outputPath))),
+                UncroppedMonitorFramePersisted = false
+            };
+            File.WriteAllText(Path.ChangeExtension(outputPath, ".capture.json"),
+                JsonSerializer.Serialize(metadata, new JsonSerializerOptions { WriteIndented = true }));
+        }
+    }
+
     private static Windows.Graphics.Capture.GraphicsCaptureItem CreateForMonitor(nint monitor)
     {
         var hr = WindowsCreateString("Windows.Graphics.Capture.GraphicsCaptureItem",
@@ -222,6 +422,40 @@ internal static class Program
             {
                 var interop = (IGraphicsCaptureItemInterop)Marshal.GetObjectForIUnknown(factoryPointer);
                 hr = interop.CreateForMonitor(monitor, ref UnsafeGuid(GraphicsCaptureItemId), out var itemPointer);
+                Marshal.ThrowExceptionForHR(hr);
+                try
+                {
+                    return WinRT.MarshalInterface<Windows.Graphics.Capture.GraphicsCaptureItem>.FromAbi(itemPointer);
+                }
+                finally
+                {
+                    Marshal.Release(itemPointer);
+                }
+            }
+            finally
+            {
+                Marshal.Release(factoryPointer);
+            }
+        }
+        finally
+        {
+            WindowsDeleteString(className);
+        }
+    }
+
+    private static Windows.Graphics.Capture.GraphicsCaptureItem CreateForWindow(nint hwnd)
+    {
+        var classNameText = "Windows.Graphics.Capture.GraphicsCaptureItem";
+        var hr = WindowsCreateString(classNameText, classNameText.Length, out var className);
+        Marshal.ThrowExceptionForHR(hr);
+        try
+        {
+            hr = RoGetActivationFactory(className, ref UnsafeGuid(GraphicsCaptureItemInteropId), out var factoryPointer);
+            Marshal.ThrowExceptionForHR(hr);
+            try
+            {
+                var interop = (IGraphicsCaptureItemInterop)Marshal.GetObjectForIUnknown(factoryPointer);
+                hr = interop.CreateForWindow(hwnd, ref UnsafeGuid(GraphicsCaptureItemId), out var itemPointer);
                 Marshal.ThrowExceptionForHR(hr);
                 try
                 {
@@ -434,6 +668,12 @@ internal static class Program
 
     [DllImport("user32.dll", ExactSpelling = true)]
     private static extern bool IsWindowVisible(nint window);
+
+    [DllImport("user32.dll", ExactSpelling = true)]
+    private static extern bool IsWindow(nint window);
+
+    [DllImport("user32.dll", ExactSpelling = true)]
+    private static extern nint MonitorFromWindow(nint window, uint flags);
 
     [DllImport("user32.dll", ExactSpelling = true)]
     private static extern bool GetWindowRect(nint window, out NativeRect rect);

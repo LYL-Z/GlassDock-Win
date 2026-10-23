@@ -2,9 +2,11 @@
 param(
     [switch]$ConfirmInteractiveTest,
     [switch]$NonActivatingDockStart,
+    [switch]$SkipCapture,
+    [string]$AuthorizationPhrase,
     [ValidateSet('Wpf','WinUI')][string[]]$Candidates = @('Wpf','WinUI'),
     [ValidateRange(3,30)][int]$FullscreenSeconds = 8,
-    [ValidateRange(30,1800)][int]$TimeoutSeconds = 180
+    [ValidateRange(30,300)][int]$TimeoutSeconds = 180
 )
 
 $ErrorActionPreference = 'Stop'
@@ -147,7 +149,9 @@ if($preflightExitCode -ne 0 -or -not($preflight -and $preflight.Status -eq 'PASS
     return
 }
 
-Confirm-M0InteractiveTest -Confirmed:$ConfirmInteractiveTest -Purpose "enter DXGI exclusive fullscreen at the existing $($originalMode.PelsWidth)x$($originalMode.PelsHeight)@$($originalMode.DisplayFrequency)Hz mode, briefly launch each selected Dock PoC, then release fullscreen; test-owned processes only; Escape or Ctrl+Shift+F12 stops the run"
+Confirm-M0InteractiveTest -Confirmed:$ConfirmInteractiveTest -AuthorizationPhrase $AuthorizationPhrase `
+    -RequiredPhrase 'RUN M0 FINAL DESKTOP TEST' `
+    -Purpose "enter DXGI exclusive fullscreen at the existing $($originalMode.PelsWidth)x$($originalMode.PelsHeight)@$($originalMode.DisplayFrequency)Hz mode, briefly launch each selected Dock PoC without activation, then release fullscreen; no mode-setting API is intended; test-owned processes only; Escape or Ctrl+Shift+F12 stops the run"
 if(-not $PSCmdlet.ShouldProcess('Current desktop','Show a controlled DXGI exclusive fullscreen surface for at most 8 seconds per candidate and launch the selected Dock PoC')){return}
 
 $session=Start-M0InteractiveTestSession -RepoRoot $script:RepoRoot -LocalRoot $script:LocalRoot -Purpose 'verify actual DXGI exclusive entry/exit at the current mode and observe Dock process launch' -WatchdogExe $watchdogExe -TimeoutSeconds $TimeoutSeconds
@@ -219,23 +223,25 @@ try{
             $capturePath=Join-Path $candidateRoot 'after-dock-monitor.png'
             $captureErrorPath=[IO.Path]::ChangeExtension($capturePath,'.capture-error.txt')
             $captureMetadataPath=[IO.Path]::ChangeExtension($capturePath,'.capture.json')
-            $captureStatus='BLOCKED';$captureError=$null
-            try{
-                $captureProcess=Start-M0OwnedTestProcess -Session $session -FilePath $wgcProbeExe -WorkingDirectory (Split-Path -Parent $wgcProbeExe) -ArgumentList @('capture-monitor',$capturePath)
-                for($i=0;$i -lt 40;$i++){$captureProcess.Refresh();if($captureProcess.HasExited){break};Start-Sleep -Milliseconds 100}
-                if(-not $captureProcess.HasExited){throw 'Windows.Graphics.Capture monitor capture did not exit within four seconds.'}
-                if($captureProcess.ExitCode -eq 0 -and (Test-Path -LiteralPath $capturePath) -and (Test-Path -LiteralPath $captureMetadataPath)){$captureStatus='PASS'}
-                elseif(Test-Path -LiteralPath $captureErrorPath){$captureError=Get-Content -LiteralPath $captureErrorPath -Raw}
-                else{$captureError="WGC process exit=$($captureProcess.ExitCode); expected PNG/metadata were not produced."}
-            }catch{$captureError=$_.Exception.Message}
+            $captureStatus=if($SkipCapture){'SKIPPED_BY_PRIVACY_SCOPE'}else{'BLOCKED'};$captureError=$null
+            if(-not $SkipCapture){
+                try{
+                    $captureProcess=Start-M0OwnedTestProcess -Session $session -FilePath $wgcProbeExe -WorkingDirectory (Split-Path -Parent $wgcProbeExe) -ArgumentList @('capture-monitor',$capturePath)
+                    for($i=0;$i -lt 40;$i++){$captureProcess.Refresh();if($captureProcess.HasExited){break};Start-Sleep -Milliseconds 100}
+                    if(-not $captureProcess.HasExited){throw 'Windows.Graphics.Capture monitor capture did not exit within four seconds.'}
+                    if($captureProcess.ExitCode -eq 0 -and (Test-Path -LiteralPath $capturePath) -and (Test-Path -LiteralPath $captureMetadataPath)){$captureStatus='PASS'}
+                    elseif(Test-Path -LiteralPath $captureErrorPath){$captureError=Get-Content -LiteralPath $captureErrorPath -Raw}
+                    else{$captureError="WGC process exit=$($captureProcess.ExitCode); expected PNG/metadata were not produced."}
+                }catch{$captureError=$_.Exception.Message}
+            }
             if($captureProcess -and -not $captureProcess.HasExited){try{[void](Stop-M0OwnedTestProcess -Session $session -Process $captureProcess)}catch{}}
             Start-Sleep -Milliseconds 250
             $entryStatus=Read-M0ProbeStatus $statusPath
             $afterDockSamples.Add([pscustomobject]@{AtUtc=[DateTimeOffset]::UtcNow;Fullscreen=$entryStatus.Fullscreen;Phase=$entryStatus.Phase;CurrentMode=$entryStatus.CurrentMode;DockVisible=$dockVisible;DockTopmost=$dockTopmost;DockCenterHitProcess=$pointHitPid;DockProcessId=$dock.Id;ForegroundProcessId=(Get-M0ForegroundProcessId);TaskbarVisible=$taskbarVisible})
             $focusStolenBeforeCapture = $afterDockSamples[0].ForegroundProcessId -eq $dock.Id
             $exclusiveLostBeforeCapture = -not $afterDockSamples[0].Fullscreen
-            $exclusiveChangedDuringCapture = $afterDockSamples[0].Fullscreen -and -not $afterDockSamples[1].Fullscreen
-            $coexistenceStatus = if ($focusStolenBeforeCapture -or $exclusiveLostBeforeCapture) { 'FAIL' } else { 'BLOCKED' }
+            $exclusiveChangedDuringCapture = if($SkipCapture){$null}else{$afterDockSamples[0].Fullscreen -and -not $afterDockSamples[1].Fullscreen}
+            $coexistenceStatus = if ($focusStolenBeforeCapture -or $exclusiveLostBeforeCapture) { 'FAIL' } elseif ($SkipCapture) { 'PASS' } else { 'BLOCKED' }
             $results.Add([pscustomobject]@{
                 Candidate=$candidate;Scenario='DXGI-exclusive-with-Dock-launch';StartupMode=if($NonActivatingDockStart){'NonActivatingCandidate'}else{'Default'};ProbeProcessId=$probe.Id;DockProcessId=$dock.Id
                 EntryConfirmed=$true;EntryStatus='PASS';CoexistenceStatus=$coexistenceStatus;FocusStolenBeforeCapture=$focusStolenBeforeCapture
@@ -244,7 +250,7 @@ try{
                 DockVisible=$dockVisible;DockTopmost=$dockTopmost;DockCenterPoint=if($dockRectOk){"$dockCenterX,$dockCenterY"}else{''};DockCenterHitProcess=$pointHitPid
                 ForegroundProcessIdAfterDock=$foregroundPid;TaskbarVisible=$taskbarVisible;CaptureStatus=$captureStatus;CapturePath=if($captureStatus -eq 'PASS'){$capturePath}else{$null};CaptureError=$captureError;Samples=@($afterDockSamples)
                 Status=$coexistenceStatus
-                StatusLimit='Dock invisibility is allowed while true DXGI exclusive fullscreen remains active. The test records foreground PID and exclusive state before and after WGC capture: foreground becoming the Dock process or exclusive loss before capture is a FAIL; an exclusive transition only during capture is attributed as capture-confounded and remains BLOCKED. This probe does not test game input interception or automatic restoration after fullscreen exit, and it is not a game compatibility matrix.'
+                StatusLimit='Dock invisibility is allowed while true DXGI exclusive fullscreen remains active. Foreground becoming the Dock process or exclusive loss before capture is a FAIL. With -SkipCapture, compositor capture is omitted to protect unrelated desktop content and a retained exclusive state plus unchanged foreground is sufficient for this narrow window-behavior check. This probe does not test game input interception or automatic restoration after fullscreen exit, and it is not a game compatibility matrix.'
             })
         }
         catch{

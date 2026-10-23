@@ -210,6 +210,7 @@ public sealed partial class MainWindow : Window, IDockWindowHost
         EnsureTopmostWithoutActivation();
         SaveEdge(edge);
         var dpi = GetDpiForWindow(_hwnd);
+        WriteCompositionWindowStatus(dpi);
         StatusText.Text = $"{_itemCount} placeholders · {edge} · {dpi / 96.0:P0} DPI · " +
             $"{_effectiveIconSize:0.#} DIP icons · WinUI Composition";
         DockLogger.Info($"WinUI 3 spike positioned; edge={edge}; dpi={dpi}.");
@@ -365,8 +366,21 @@ public sealed partial class MainWindow : Window, IDockWindowHost
 
     private void ConfigureVisualCandidate()
     {
-        if (!string.Equals(Environment.GetEnvironmentVariable("GLASSDOCK_M0_VISUAL_CANDIDATE"),
-                "winui-system-acrylic", StringComparison.Ordinal))
+        var candidate = Environment.GetEnvironmentVariable("GLASSDOCK_M0_VISUAL_CANDIDATE");
+        if (string.Equals(candidate, "winui-composition-backdrop-blur", StringComparison.Ordinal))
+        {
+            BackdropElement.Visibility = Visibility.Collapsed;
+            GlassPanel.Background = new CompositionBackdropBlurBrush(28, "project-dock-window");
+            GlassPanel.BorderBrush = new SolidColorBrush(ColorHelper.FromArgb(0xE6, 255, 255, 255));
+            var compositionShadow = new ThemeShadow();
+            compositionShadow.Receivers.Add(ShadowReceiver);
+            GlassPanel.Shadow = compositionShadow;
+            DockLogger.Info("M0 CompositionBackdropBrush + GaussianBlurEffect candidate enabled on the project Dock HWND; " +
+                            "Desktop Acrylic and DWM backdrops are disabled for isolation. Rounded clipping is provided by the XAML Border.");
+            return;
+        }
+
+        if (!string.Equals(candidate, "winui-system-acrylic", StringComparison.Ordinal))
             return;
 
         BackdropElement.SystemBackdrop = new Microsoft.UI.Xaml.Media.DesktopAcrylicBackdrop();
@@ -379,6 +393,36 @@ public sealed partial class MainWindow : Window, IDockWindowHost
         GlassPanel.Translation = new Vector3(0, 0, 16);
         DockLogger.Info("WinUI SystemBackdropElement Desktop Acrylic candidate enabled with 28 DIP rounded bounds, " +
                         "translucent tint, rim, and ThemeShadow. DWM-composed visual capture is still required.");
+    }
+
+    private void WriteCompositionWindowStatus(uint dpi)
+    {
+        if (!string.Equals(Environment.GetEnvironmentVariable("GLASSDOCK_M0_VISUAL_CANDIDATE"),
+                "winui-composition-backdrop-blur", StringComparison.Ordinal))
+            return;
+
+        var statusRoot = Environment.GetEnvironmentVariable("GLASSDOCK_M0_COMPOSITION_STATUS_ROOT");
+        if (string.IsNullOrWhiteSpace(statusRoot) || !Path.IsPathFullyQualified(statusRoot) ||
+            !statusRoot.StartsWith("D:\\", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var rectAvailable = GetWindowRect(_hwnd, out var rect);
+        var status = new
+        {
+            CapturedAtUtc = DateTimeOffset.UtcNow,
+            Role = "project-dock-window",
+            Hwnd = $"0x{_hwnd.ToInt64():X}",
+            ProcessId = Environment.ProcessId,
+            Dpi = dpi,
+            BoundsPx = rectAvailable ? new { rect.Left, rect.Top, rect.Right, rect.Bottom } : null,
+            UsesLayeredWindow = false,
+            CompositionCandidate = "CompositionBackdropBrush + GaussianBlurEffect",
+            RoundedRegionCandidateRequested = string.Equals(
+                Environment.GetEnvironmentVariable("GLASSDOCK_M0_TEST_ROUNDED_REGION"), "1", StringComparison.Ordinal)
+        };
+        Directory.CreateDirectory(statusRoot);
+        File.WriteAllText(Path.Combine(statusRoot, "project-dock-window.json"),
+            JsonSerializer.Serialize(status, new JsonSerializerOptions { WriteIndented = true }));
     }
 
     private void AnimateScale(FrameworkElement element, double target)

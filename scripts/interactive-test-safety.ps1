@@ -4,6 +4,8 @@ using System;
 using System.Runtime.InteropServices;
 using System.Text;
 
+[UnmanagedFunctionPointer(CallingConvention.Winapi)] public delegate bool GlassDockEnumWindowsCallback(IntPtr hwnd, IntPtr lParam);
+
 [StructLayout(LayoutKind.Sequential)] public struct GlassDockM0SafetyRect { public int Left; public int Top; public int Right; public int Bottom; }
 [StructLayout(LayoutKind.Sequential)] public struct GlassDockM0SafetyPoint { public int X; public int Y; }
 [StructLayout(LayoutKind.Sequential)] public struct GlassDockM0SafetyMouseInput { public int Dx; public int Dy; public uint MouseData; public uint Flags; public uint Time; public UIntPtr ExtraInfo; }
@@ -21,6 +23,7 @@ public static class GlassDockM0SafetyNative
     [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hwnd);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
+    [DllImport("user32.dll", SetLastError=true)] public static extern bool EnumWindows(GlassDockEnumWindowsCallback callback, IntPtr lParam);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string className, string windowName);
     [DllImport("user32.dll")] public static extern int GetSystemMetrics(int index);
     [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr dpiContext);
@@ -33,6 +36,23 @@ public static class GlassDockM0SafetyNative
         GetWindowText(hwnd, text, text.Capacity);
         return text.ToString();
     }
+
+    public static IntPtr FindFirstVisibleWindowForProcess(uint targetProcessId)
+    {
+        IntPtr found = IntPtr.Zero;
+        GlassDockEnumWindowsCallback callback = (hwnd, lParam) =>
+        {
+            if (!IsWindowVisible(hwnd)) return true;
+            uint processId = 0;
+            GetWindowThreadProcessId(hwnd, out processId);
+            if (processId != targetProcessId) return true;
+            found = hwnd;
+            return false;
+        };
+        EnumWindows(callback, IntPtr.Zero);
+        GC.KeepAlive(callback);
+        return found;
+    }
 }
 '@
     Add-Type -TypeDefinition $safetyNativeSource
@@ -44,27 +64,34 @@ $script:M0InteractiveTestEnvironmentNames = @(
     'GLASSDOCK_M0_TEST_ALLOW_HIDE',
     'GLASSDOCK_POC_ITEM_COUNT',
     'GLASSDOCK_POC_ICON_SIZE',
-    'GLASSDOCK_M0_TEST_ROUNDED_REGION'
+    'GLASSDOCK_POC_STATE_ROOT',
+    'GLASSDOCK_M0_TEST_ROUNDED_REGION',
+    'GLASSDOCK_M0_VISUAL_CANDIDATE',
+    'GLASSDOCK_M0_COMPOSITION_PROBE_MODE',
+    'GLASSDOCK_M0_COMPOSITION_STATUS_ROOT',
+    'GLASSDOCK_M0_NONACTIVATING_START',
+    'GLASSDOCK_M0_INPUT_TRACE'
 )
 
 function Confirm-M0InteractiveTest {
     param(
         [Parameter(Mandatory)][switch]$Confirmed,
         [Parameter(Mandatory)][string]$Purpose,
-        [string]$AuthorizationPhrase
+        [string]$AuthorizationPhrase,
+        [string]$RequiredPhrase = 'RUN M0 DESKTOP TEST'
     )
 
     if (-not $Confirmed) {
         throw "Interactive test was not started. Re-run with -ConfirmInteractiveTest, then type the exact confirmation phrase when prompted. Purpose: $Purpose"
     }
     if ($PSBoundParameters.ContainsKey('AuthorizationPhrase')) {
-        if ($AuthorizationPhrase -cne 'RUN M0 DESKTOP TEST') {
+        if ($AuthorizationPhrase -cne $RequiredPhrase) {
             throw 'Interactive test was not started because the exact confirmation phrase was not supplied.'
         }
         return
     }
-    $answer = Read-Host "Desktop-impacting M0 test: $Purpose. Emergency stop: Ctrl+Shift+F12. Type RUN M0 DESKTOP TEST to continue"
-    if ($answer -cne 'RUN M0 DESKTOP TEST') {
+    $answer = Read-Host "Desktop-impacting M0 test: $Purpose. Emergency stop: Ctrl+Shift+F12. Type $RequiredPhrase to continue"
+    if ($answer -cne $RequiredPhrase) {
         throw 'Interactive test was not started because the exact confirmation phrase was not entered.'
     }
 }
@@ -394,6 +421,14 @@ function Assert-M0InteractiveTestCanContinue {
 function Add-M0InteractiveRestorationCheck {
     param([Parameter(Mandatory)]$Session, [Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][bool]$Passed, [string]$Details = '')
     $Session.RestorationChecks.Add([pscustomobject]@{ Name=$Name; Passed=$Passed; Details=$Details })
+}
+
+function Restore-M0InteractiveTestEnvironment {
+    param([Parameter(Mandatory)]$Session)
+
+    foreach ($name in $script:M0InteractiveTestEnvironmentNames) {
+        [Environment]::SetEnvironmentVariable($name, $Session.EnvironmentBefore[$name], 'Process')
+    }
 }
 
 function Stop-M0InteractiveTestSession {

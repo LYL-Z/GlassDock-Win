@@ -12,6 +12,7 @@
     <EnableMsixTooling>false</EnableMsixTooling>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Microsoft.Graphics.Win2D" />
     <PackageReference Include="Microsoft.WindowsAppSDK" />
     <ProjectReference Include="..\..\src\GlassDock.Core\GlassDock.Core.csproj" />
     <ProjectReference Include="..\..\src\GlassDock.App\GlassDock.App.csproj" />

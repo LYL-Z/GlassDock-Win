@@ -2,19 +2,21 @@
 
 更新日期：2026-10-23。本文区分已观测结果、公开 API 能力和未验证推断；不代表生产框架已选定。
 
+> **范围变更说明：** 原始 33 项 M0 证据仍保留在 [基线矩阵](dock-evidence/M0/REQ-matrix.md)；完整视觉、动画、硬件矩阵与性能验收已按有记录的变更移交后续阶段，不代表 PASS 或豁免。逐 ID 去向见 [迁移矩阵](dock-evidence/M0/M0-to-M1-requirement-migration.md)。最终有限 Composition 尝试已运行但目标 Dock 路径未显示 blur；阶段决定为 **NO-GO，不进入 M1，不冻结路线**，见 [最终决策](dock-evidence/M0/M0-final-technical-decision.md)。
+
 ## 当前判断
 
 | 维度 | WPF + Win32 互操作 | WinUI 3 + Windows App SDK | Win32 + DirectComposition / Direct2D |
 |---|---|---|---|
 | 逐像素透明与点击路由 | 默认 layered-window / hit-test 变体在当前 250% 单屏 SendInput 矩阵 18/18 通过；物理输入和独占输入未测 | 默认透明根区域 9/9 失败；公开 SetWindowRgn 候选输入 18/18 通过，但矩形残边、AA、动画和 DPI 代价未验 | 未实现；裸 Win32 不自动得到圆角透明输入，需要自建 hit-test 与 clip |
-| 桌面背景模糊 | WPF + DWM system backdrop 已捕获 6 个浅/深×三位置场景；属性 HRESULT 为 S_OK，但 6/6 仍能清晰看见测试网格，无可确认 blur，且有矩形宿主底色 | Desktop Acrylic 已捕获 6 场景，启用日志存在；6/6 仍看见清晰网格，圆角 pill 外有矩形宿主/阴影；SetWindowRgn 变体同样无 blur | 可自建 Composition 背景/效果链；视觉自由度高，但当前没有 PoC，不应先于公开 Composition 路线探索 |
-| 材质还原空间 | 当前 whole-HWND DWM 候选在 layered window 中视觉 FAIL；WPF Visual Layer + HwndHost 是独立候选，尚未实施/运行，且带互操作代价 | 当前 Desktop Acrylic 组合视觉 FAIL；公开 Composition 背景采样、模糊和 mask 可作为一次有停止条件的下一步，不代表 Liquid Glass 已实现 | 自定义空间最大，但需自行承担圆角 mask、alpha、阴影、设备恢复、能耗及无障碍维护 |
+| 桌面背景模糊 | WPF + DWM system backdrop 的 6 场景无确认 blur；当前 layered HWND 简单路径视觉 FAIL | Desktop Acrylic 6 场景无 blur。最终 Composition control 对照有真实 blur，但目标 Dock 区域没有可辨软化；当前 Dock XAML brush 集成视觉 FAIL | 未实现；其他系统级 backdrop/DirectComposition 链无实际 Dock 窗口证据 |
+| 材质还原空间 | 当前 whole-HWND DWM 候选视觉 FAIL；WPF Visual Layer + HwndHost 尚未验证且有互操作代价 | 独立 WinUI Composition 控制窗口证实 blur API 可运行；目标 Dock HWND 的窗口 backdrop / 视觉层级配置尚未解决 | 自定义空间最大，但需自行承担圆角 mask、alpha、阴影、设备恢复、能耗及无障碍维护 |
 | 动画与性能测量 | 可选 CompositionTarget.Rendering 采样和动画完成计时已实现；未收集运行 trace | 可选 XAML rendering callback trace 已实现；未收集运行 trace | 可自建视觉树/动画；API 层级更低不代表帧率更稳，尚无测量 |
 | 独占全屏启动 | DXGI 状态仍 true、Dock 不在 WGC 帧里；但采样前台 PID 是 Dock PID，默认路径违反不抢焦点。游戏输入和退出恢复未测 | 启动后 DXGI 独占已变 false，前台 PID 是 Dock PID；OnLaunched 调用 Activate；因果未隔离 | 未测；仍须不抢焦点、不强退独占并能恢复 |
 | SetWindowRgn 视觉/扩展 | 不适用当前 WPF 输入路线 | 区域输入矩阵 18/18 通过；本轮其材质变体 6/6 有 WGC 帧但 0/6 视觉通过。面板轮廓可见，仍有矩形宿主边线；像素级 AA、动画外溢、多 DPI 重建未测 | 可设计自定义 alpha mask/clip，但需完整实现和验证 |
 | DPI / 多显示器 / 刷新 | 当前仅 250% 单屏、120/240Hz 窗口生存；其余设备依赖未测 | 相同；region 只在当前 250% 输入矩阵测过，布局变化/动态 DPI 未测 | 未测 |
 | 托盘 / 恢复 | WPF Show/Exit 实际通过；隔离配置缺失/非法恢复通过 | Native HMENU 含 Show/Exit，router 回调单测 3/3；真实键盘/辅助功能选择未测，自动化读取失败不是产品缺陷证据 | 未实现 |
-| 现阶段结论 | 输入证据较强；本轮 DWM Acrylic 组合视觉 FAIL。保留为输入对照，不冻结 | 最明确的下一条有限视觉路线是 Composition 背景采样/blur/mask；当前系统 Acrylic 配置和 region 变体都 FAIL，不冻结 | 暂不启动；公开组合路线尚未按停止规则走完 |
+| 现阶段结论 | 输入证据较强；当前 DWM backdrop 简单组合视觉 FAIL；非激活测试 BLOCKED | 默认透明输入失败、region 输入候选通过；Acrylic 与当前 Dock Composition blur 集成视觉 FAIL；非激活/独占候选未完成 | 暂不启动；只有目标窗口级公开 Composition 路线经一项窄验证失败后再申请 |
 
 本轮视觉证据仅针对本机 Windows 11、3840×2400、240 DPI / 250%、单显示器、58 DIP 图标与静态状态。浅/深表示受控底图颜色而非系统主题切换。18/18 捕获来自 WGC 的 DWM 合成主屏图像，不是 scanout；静态图标完整不代表 zoom、动画、菜单或拖拽已通过。报告和逐场景判定位于 D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\visual\20261023T091558Z\，原始图像不提交 Git。
 
@@ -24,7 +26,7 @@
 
 WinUI 3 候选通过 SystemBackdropElement 设置 8 DIP 内边距、28 DIP 圆角区域，在图标 pill 后启用 Desktop Acrylic，前景保留低透明 tint、边缘高光和 ThemeShadow。本轮 6 个场景的运行日志确认 Desktop Acrylic 候选启用，但高对比网格、棋盘边界和斜线在面板内仍清晰可见，故该候选的真实 blur 视觉判定为 FAIL。当前捕获不能确定是系统回退、运行环境条件还是此窗口/材质组合限制；没有把未查明原因写成 API 不支持。[Materials overview](https://learn.microsoft.com/en-us/windows/apps/develop/ui/materials) · [SystemBackdropElement 与圆角区域](https://learn.microsoft.com/en-us/windows/apps/develop/ui/system-backdrops)。
 
-单纯 Desktop Acrylic 候选不通过，不等于 WinUI Composition 的视觉能力不存在。Windows Composition 公开提供 CompositionBackdropBrush 作为背景采样输入，并可绑定 Gaussian blur 等内建 effect brush 和 SpriteVisual；Win2D effect graph 可继续组合 blur、颜色、对比度、mask 与动画参数。下一步若获批，只做一个有界的自定义背景采样 + blur + 圆角 mask PoC，直接证明对比线在 Dock 材质中心软化且矩形宿主消失；一次结果仍不合格即停止该分支。公开 API 能力本身不等于运行时通过，也不等于 Liquid Glass 的折射、边缘色散或动态光学响应已实现。[Composition brushes](https://learn.microsoft.com/en-us/windows/apps/develop/composition/composition-brushes) · [Composition effects](https://learn.microsoft.com/en-us/windows/apps/develop/composition/composition-effects)。
+单纯 Desktop Acrylic 候选不通过，不代表 WinUI Composition blur API 不存在。本次 independent control 视觉 PASS 证明 effect 能在受控 WinUI composition window 内形成实际模糊；Dock HWND 的同类 brush 未显示模糊，说明目标窗口集成路径尚未通过。微软文档也区分常规 `CompositionBackdropBrush` 与系统 backdrop brush 的用法；API 公开存在不代表当前 XAML Border 已绑定到能够采样窗口外背景的配置。[Composition brushes](https://learn.microsoft.com/en-us/windows/apps/develop/composition/composition-brushes) · [CompositionBackdropBrush API](https://learn.microsoft.com/en-us/windows/windows-app-sdk/api/winrt/microsoft.ui.composition.compositionbackdropbrush?view=windows-app-sdk-2.0)。下一步不是扩大场景，而是在另获授权后仅验证目标 Dock HWND 的 window-level/system-backdrop 接入；若同一高对比背景仍无可见 blur，就停止该分支。API 成功也不等于 Liquid Glass 的折射、边缘色散或动态光学响应已实现。
 
 ### WPF
 
@@ -33,6 +35,16 @@ WinUI 3 候选通过 SystemBackdropElement 设置 8 DIP 内边距、28 DIP 圆�
 WPF 的 HwndHost / Visual Layer 互操作是另一条路线，不应混同于本次已失败的 DWM 候选。它还没有 PoC 证据。微软文档列出的 HwndHost 限制包括整体 opacity/transform 与父元素 clipping 差异，区域内输入也直接进入 Win32；这可能增加逐像素透明、圆角和 zoom 动画的集成成本。因此只在用户重新批准后考虑一次有界验证；若单次运行仍无真实 blur，或留下矩形宿主/不可接受裁切，就停止该分支。[WPF Visual Layer interop](https://learn.microsoft.com/en-us/windows/apps/desktop/modernize/ui/using-the-visual-layer-with-wpf) · [WPF/Win32 interop 限制](https://learn.microsoft.com/en-us/dotnet/desktop/wpf/advanced/wpf-and-win32-interoperation)。
 
 旧 DwmEnableBlurBehindWindow 自 Windows 8 起不会产生预期 blur，不作为方案。[DwmEnableBlurBehindWindow](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/nf-dwmapi-dwmenableblurbehindwindow)。
+
+### 最终一次 Composition 背景采样实验（已按限定授权运行）
+
+本次使用 WinUI Composition `CompositionBackdropBrush` → Win2D `GaussianBlurEffect`（28 DIP）→ 圆角 XAML `Border`。控制窗口为独立全屏条纹 HWND；Dock 固定 Bottom、58 DIP，并启用当前 `SetWindowRgn` 圆角候选和 `ThemeShadow`。各保存一张 WGC 局部区域图，未裁切全屏源帧只在内存中用于裁剪，不落盘；没有增加主题/位置/尺寸矩阵。控制窗口看见真实条纹软化；项目 Dock 面板无可辨真实 blur，呈近白实底，8 个静态图标/标签可见。区域轮廓有边线/阴影，但一张局部图不足以量化 AA 或动态 region 裁剪。元数据在 `.local/evidence/m0-final/20261023T111923Z-94bc33e6/`。
+
+微软官方文档明确说明 `CompositionBackdropBrush` 在桌面应用可采样应用内容或应用窗口后方的像素，并可作为模糊效果输入；文档中的能力说明不等于当前环境已成功。[Composition brushes](https://learn.microsoft.com/en-us/windows/apps/develop/composition/composition-brushes)。系统 Acrylic 同样是官方 backdrop 方案，但此前实测无 blur；应用内 `AcrylicBrush` 只模糊当前应用 XAML 内容，不是桌面 HostBackdrop。[Materials overview](https://learn.microsoft.com/en-us/windows/apps/develop/ui/materials) [In-app Acrylic](https://learn.microsoft.com/en-us/windows/apps/develop/ui/in-app-acrylic)。
+
+判读已停止：effect brush 在两窗口创建成功；control 实际 blur PASS；Dock window blur FAIL。可归因范围是项目 Dock 的 system-backdrop/视觉层级集成，不是 API 创建失败。没有更多实验用来确定具体子因；按用户要求不继续调参数扩展样本。测试脚本的环境变量恢复和可见 HWND 枚举已静态修正，但没有重跑桌面测试。非激活启动因此 WPF=BLOCKED、WinUI=NOT TESTED，DXGI companion=NOT TESTED。
+
+精确实现与单次授权门见 [ADR-0002](adr/0002-final-m0-rendering-and-window-host.md) 和 [M0 最终决策报告](dock-evidence/M0/M0-final-technical-decision.md)。
 
 ## WinUI SetWindowRgn 候选的边界
 
@@ -96,14 +108,14 @@ API 依据：[WPF ShowActivated](https://learn.microsoft.com/en-us/dotnet/api/sy
 
 就核心问题逐项回答：
 
-- **本轮哪种方案视觉最好：** 没有方案通过材质验收。只按可见静态圆角剪影排序，WinUI + SetWindowRgn 最清楚；它仍无真实背景 blur，且保留矩形外围边线，不能被称为目标玻璃效果。
-- **哪种最值得继续：** WinUI Composition 的背景采样、模糊和 mask 作为一轮有停止条件的单独 PoC。理由是公开 API 提供区域视觉效果的实现入口，不是因为本轮 Desktop Acrylic 已经生效。WPF 保留其较强的输入证据；当前 DWM backdrop + layered HWND 简单路线视觉 FAIL。WPF Visual Layer/HwndHost 仍可作为单次备选，成本和裁剪/透明/输入风险较高。
-- **是否已证明某框架有不可接受的底层限制：** 没有。失败覆盖的是本轮三个具体组合；没有把 WPF 或 WinUI 整体判为不可能。当前问题足以停止这三种简单候选的视觉推进，尚不足以跳过未测的公开 Composition 路线。
-- **现在是否启动原生 Win32 + DirectComposition：** 否。先由用户决定是否授权下一轮的单次 WinUI Composition blur/mask 桌面验证；若它失败，再评估一次 WPF Visual Layer 互操作。两条公开路线经过有界验证仍无法满足 blur、边缘和透明输入后，再重新审议原生 PoC。
+- **本轮哪种方案视觉最好：** Dock 目标窗口没有候选达到玻璃视觉验收。独立 Composition control 的真实 blur 最清楚，但它不是 Dock 窗口效果；WinUI + SetWindowRgn 的旧截图只证明静态圆角剪影，不证明材质。
+- **哪种最值得继续：** WinUI Composition 保留为候选，理由是独立控制窗口的真实 blur 已通过；但目标 Dock HWND 的当前集成失败，因此现在不建议进入 M1。WPF 保留其较强输入证据；当前 DWM backdrop + layered HWND 视觉 FAIL，非激活观测 BLOCKED。
+- **是否已证明某框架有不可接受的底层限制：** 尚未证明框架整体不可能；已明确否定的是当前 Dock XAML backdrop brush 集成路径。具体是 system-backdrop 配置、视觉层级或宿主兼容仍待定。
+- **现在是否启动原生 Win32 + DirectComposition：** 否。当前唯一必要的下一项证据是目标 Dock HWND 的 window-level/system-backdrop 单窗口实验；只有它失败后，才比较 WPF Visual Layer 与最小原生后端。
 
 实际透明输入证据仍由 WPF 默认路径 18/18 与 WinUI region 候选 18/18 支持；WinUI 默认透明区 9/9 失败。材料证据则是本轮三候选各 6 场景，视觉 0/18 通过。性能方面仍无应用 trace、进程 Present 或 scanout 数据，DWM 全局 240Hz 数值不替代 Dock 动画测量。独占全屏启动的焦点/状态问题仍未解决。
 
-因此 **不冻结 WPF，不放弃 WinUI，不进入 M1，不启动原生 DirectComposition PoC。** 本轮授权只覆盖 18 场景静态 WGC 捕获；任何下一轮显示候选的实际桌面捕获、全屏、输入、刷新设置或性能动画测试，均须取得新的明确授权。
+因此本轮阶段结论为 **NO-GO：不冻结 WPF，不放弃 WinUI，不进入 M1，不启动原生 DirectComposition PoC。** 本轮运行因恢复标志失败而停止；任何后续实际桌面捕获、焦点/全屏、输入、显示设置或性能动画测试，都必须另行取得明确授权。原始 33 项仍按各自 ID 跟踪，不改写成 PASS。
 
 ## 主要历史证据
 
