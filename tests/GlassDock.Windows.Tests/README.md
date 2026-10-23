@@ -1,3 +1,6 @@
 # GlassDock.Windows.Tests
 
-Windows host tests are deferred until M0 selects a route. Keep pure layout/state tests in `GlassDock.Core.Tests`. This placeholder is not yet a project in the solution.
+Deterministic tests for Windows Shell adapter contracts, Core mapping, icon result bounds, and
+launch/activate/open command routing. Native discovery and icon extraction are exercised only by
+the opt-in read-only `./scripts/probe-windows-shell.ps1` command; command execution is never invoked
+by that probe or by the test suite.

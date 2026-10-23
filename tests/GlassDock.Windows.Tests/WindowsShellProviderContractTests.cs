@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using GlassDock.Core;
 using GlassDock.Windows.Shell;
@@ -18,6 +19,19 @@ public sealed class WindowsShellProviderContractTests
         Assert.AreEqual("Contoso.Editor", descriptor.TargetIdentity.Value);
         Assert.AreEqual(DockIdentityScheme.WindowsAppUserModelId, descriptor.TargetIdentity.Scheme);
         Assert.AreEqual(descriptor.TargetIdentity, caseVariant);
+    }
+
+    [TestMethod]
+    public void AumidShortcutKeepsItsLaunchLocatorWhileDeduplicatingByAumid()
+    {
+        var shortcut = WindowsShellApplicationDescriptor.FromAppUserModelIdShortcut(
+            "Editor", "Contoso.Editor", @"D:\Menu\Editor.lnk");
+        var appsFolderEntry = WindowsShellApplicationDescriptor.FromAppUserModelId(
+            "Editor", "contoso.editor", @"shell:AppsFolder\contoso.editor");
+
+        Assert.AreEqual(@"D:\Menu\Editor.lnk", shortcut.TargetIdentity.Value);
+        Assert.AreEqual("Contoso.Editor", shortcut.TargetIdentity.ComparisonKey);
+        Assert.AreEqual(shortcut.TargetIdentity, appsFolderEntry.TargetIdentity);
     }
 
     [TestMethod]
@@ -60,6 +74,7 @@ public sealed class WindowsShellProviderContractTests
         Assert.AreEqual(DockSection.PinnedApplications, item.Section);
         Assert.IsNull(item.LastUsedUtc);
         Assert.AreEqual(descriptor.TargetIdentity, item.TargetIdentity);
+        Assert.AreEqual(descriptor.TargetIdentity.Value, descriptor.IconSource);
     }
 
     [TestMethod]
@@ -93,12 +108,13 @@ public sealed class WindowsShellProviderContractTests
     [TestMethod]
     public void IconAssetCopiesEncodedBytesAndRequiresPngSignature()
     {
-        byte[] encoded = [137, 80, 78, 71, 13, 10, 26, 10, 1, 2];
+        byte[] encoded = MinimalPngHeader(16, 16);
         var asset = new WindowsShellIconAsset(encoded);
         encoded[0] = 0;
 
         Assert.AreEqual((byte)137, asset.EncodedPng.Span[0]);
         Assert.ThrowsExactly<ArgumentException>(() => new WindowsShellIconAsset(new byte[] { 0, 1, 2 }));
+        Assert.ThrowsExactly<ArgumentException>(() => new WindowsShellIconAsset(MinimalPngHeader(2048, 2048)));
     }
 
     [TestMethod]
@@ -113,5 +129,13 @@ public sealed class WindowsShellProviderContractTests
         Assert.AreEqual("IconAccessDenied", denied.DiagnosticCode);
         Assert.ThrowsExactly<ArgumentException>(() =>
             WindowsShellIconResult.Unavailable(WindowsShellIconStatus.Failed));
+    }
+
+    private static byte[] MinimalPngHeader(uint width, uint height)
+    {
+        byte[] bytes = [137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 0, 0, 0, 0, 0];
+        BinaryPrimitives.WriteUInt32BigEndian(bytes.AsSpan(16, 4), width);
+        BinaryPrimitives.WriteUInt32BigEndian(bytes.AsSpan(20, 4), height);
+        return bytes;
     }
 }
