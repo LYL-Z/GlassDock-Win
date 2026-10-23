@@ -1,18 +1,19 @@
 # M1 任务书：macOS Dock 参考研究与产品规格基线
 
-状态：**M1 规格研究工作线已启动，规格仍为草案；M1 未验收、未冻结。** 依据 2026-10-23 阶段依赖变更，官方资料归集、46 项需求初稿、采样方案、素材权利台账和平台映射可以与 M0 并行。M0 的 NO-GO 不变；生产渲染器、Windows Dock 行为实现及依赖最终 HWND/Composition 决策的工作仍须等待 M0 GO，或等待负责人批准明确范围与期限的 CONDITIONAL GO。本任务书依据原任务书 `01_macOS_Dock参考采样与需求冻结.md`，保留原 SPEC/REF ID 和后续阶段功能范围。
+状态：**M1 规格研究工作线已启动，V0.1 是临时产品基线；M1 未验收、未冻结。** 负责人于 2026-10-23 确认 D-01～D-09。负责人另行授权 M2 中不依赖 UI/窗口/渲染路线的 Core 第一批实现；首批代码已在独立分支实现并通过本地 Release 构建及 Core 回归测试，当前待 PR 审查。M0 的 NO-GO 不变；生产渲染器和窗口宿主仍未获技术冻结。依赖真实 HWND、Shell 或桌面行为的生产集成继续等待 M0 决策或单独批准。本任务书依据原任务书 `01_macOS_Dock参考采样与需求冻结.md`，保留原 SPEC/REF ID 和后续阶段功能范围。
 
 ## 目标与边界
 
-形成可追溯、可重复、可实现的 macOS Dock 行为/视觉规格与 Windows 映射，为 M2 Core 和 M3 窗口宿主提供冻结输入。目标产品仍为尽可能 1:1 复刻 macOS Dock 的外貌、图标、Liquid Glass、动画、交互与系统整合。M1 只测量和写规格，不将 Windows PoC 半透明效果当成产品视觉，也不创建完整 Dock 功能。
+形成可追溯、可重复、可实现的 macOS Dock 行为/视觉规格与 Windows 映射，为 M2 Core 和 M3 窗口宿主提供临时实现输入。目标产品仍为尽可能 1:1 复刻 macOS Dock 的外貌、图标、Liquid Glass、动画、交互与系统整合。M1 不将 Windows PoC 半透明效果当成产品视觉，不因 V0.1 而冻结生产窗口宿主或渲染路线。
 
 ## 当前工作包状态（PROVISIONAL）
 
 | 工作包 | 当前状态 | 已有证据/成果 | 剩余门槛 |
 |---|---|---|---|
 | 官方功能语义与来源索引（SPEC-01） | PROVISIONAL REVIEWED | A1–A8、A10–A16 已按 DOCK ID 审查具体支持范围；区分直接语义、部分支持、HIG/设计指导和来源缺口 | 官方网页不能代替 Mac 实测；随版本变化的页面在实现前复核 |
-| 46 项行为映射与验收（SPEC-01） | PROVISIONAL V0.1 BASELINE | 原 ID、需求文字、类别、原阶段保留；46 项均有来源范围、Windows 提案、优先级、依赖、Given/When/Then 检查和验证计划 | 负责人评审优先级和决策清单；M1 不因此冻结或将实现标为通过 |
-| 三分区、默认项目和图标来源 | PROVISIONAL | 固定 App / 可选近期 App / 文件与文件夹区为语义提案；Explorer、用户固定 App、Downloads、Recycle Bin 为 Windows 映射候选；无 Apple 或第三方图像资产 | Finder/Explorer 默认固定、近期默认值、区域自定义性待负责人决定；Mac 默认组成待实机样本 |
+| 46 项行为映射与验收（SPEC-01） | PROVISIONAL V0.1 BASELINE + OWNER DECISIONS | 原 ID、需求文字、类别、原阶段保留；来源范围、优先级、依赖、验收和 D-01～D-09 均可追踪 | Mac 参数仍待实机；首启 Downloads/Recycle Bin 清单与若干细节未决定；不将实现标为通过 |
+| 三分区、默认项目和图标来源 | PROVISIONAL — 部分产品政策已批准 | Explorer 默认映射、近期默认开启但无来源为空、底部默认和合理分区自定义已确认；无 Apple 或第三方图像资产 | Downloads/Recycle Bin 是否首启固定仍未决定；Mac 默认组成待实机样本 |
+| M2 Core 第一批纯逻辑 | IN PROGRESS — 已获负责人授权 | 项目身份、三分区状态、固定/近期、排序、命令契约、配置版本与恢复代码及测试正在独立分支实现 | 不接 Shell、进程历史、HWND、文件系统或 UI；完成后另提交 PR，由负责人决定合并 |
 | Mac 样本与视觉测量（SPEC-02/03，REF-01–07） | BLOCKED — NO MAC SAMPLE | 采样 ID、字段和证据登记格式已建立；当前 manifest 没有样本资产 | 需要一台可记录系统 build、Dock 偏好和显示拓扑的 Mac；取得授权后采样，未取样前所有视觉/时序值保持 NOT TESTED |
 | 素材与授权（SPEC-04） | IN PROGRESS | Apple/第三方素材分类、引用与再分发边界、源链接台账已建立；本轮没有导入或下载图像 | 逐项审查将来选择的 Windows 图标/字体/声音素材；项目 LICENSE 仍独立待决定 |
 | Windows 环境与性能基线（SPEC-05） | PARTIAL | M0 的候选窗口/输入/合成和诊断日志仍作为 PoC 基线 | 不把旧 DWM 全局值当作 Dock 输出数据；需按授权测试与能力情况补充分层测量 |
@@ -42,7 +43,7 @@
 
 ### 当前规格成熟度与优先级提案
 
-截至本轮，46 个原始 DOCK ID 均保留原描述、原类别、原阶段和来源字段；矩阵新增逐项临时优先级、理由、依赖、Given/When/Then 式验收检查与验证计划。所有规格仍是 **PROVISIONAL**，所有 Mac 硬件观察仍是 **NOT TESTED**，所有实现仍是 **NOT STARTED**。新增优先级用于建议开发顺序，**不豁免任何原始要求、不改变原阶段、不将未测项改成 PASS，也不调整 M0 验收结论。**
+截至本轮，46 个原始 DOCK ID 均保留原描述、原类别、原阶段和来源字段；矩阵新增逐项临时优先级、理由、依赖、Given/When/Then 式验收检查与验证计划。所有规格仍是 **PROVISIONAL**，所有 Mac 硬件观察仍是 **NOT TESTED**；DOCK-001、006–009、012–013、021–022、036、042 仅标记为 Core 局部实现，其余 35 项为 **NOT STARTED**，没有一项完整 Dock 功能验收通过。新增优先级用于建议开发顺序，**不豁免任何原始要求、不改变原阶段、不将未测项改成 PASS，也不调整 M0 验收结论。**
 
 | 提案 | 含义 | 用途 |
 |---|---|---|
@@ -136,20 +137,29 @@ V0.1 完成一次 46 行完整性、来源实质性、依赖方向和验收可�
 
 | 模块/文件 | 当前真实能力 | 尚缺能力 |
 |---|---|---|
-| `src/GlassDock.Core/DockModels.cs` | `DockItem(Id, Label, Glyph, AccentHex)` 展示记录；`DemoDockItems` 生成 8/24 个占位项 | 项目类型、语义分区、稳定目标身份、固定/近期/文件夹状态、配置持久化和真实图标解析 |
+| `src/GlassDock.Core/DockModels.cs` | 保留 M0 UI 演示用 `DockItem(Id, Label, Glyph, AccentHex)` 和 8/24 占位项 | 不作为持久化产品对象；实际状态由新增 `DockProjectState.cs` 表示，图标解析仍待 Shell/UI adapter |
+| `src/GlassDock.Core/DockProjectState.cs` | M2 新增：稳定 GUID 项目 ID、提供方规范身份比较键、三分区不可变状态、固定/近期去重、最多三项真实观察近期记录、排序与偏好转换；默认 Explorer/底部/FollowSystem/近期启用但列表为空 | 不解析真实 Windows 身份，不访问系统近期记录；Activity 只能由后续真实 observer 提供；没有文件操作或 UI |
+| `src/GlassDock.Core/DockCommands.cs` | M2 新增：Launch/Activate/Open 命令意图和完成/拒绝/失败结果类型 | 没有 Shell/进程启动、HWND 激活或焦点改变实现 |
+| `src/GlassDock.Core/DockConfigurationJson.cs` | M2 新增：JSON schema v3、从项目内兼容格式 v1/v2 迁移、缺失配置默认、无效/未知/超大数据恢复与诊断 | v1/v2 是兼容格式测试输入，不表示曾正式发布；只做内存序列化/反序列化，不选择用户配置路径、不写文件；原子保存与有界磁盘备份由下一独立存储 PR 实现 |
 | `src/GlassDock.Core/DockLayout.cs` | 给定工作区、Dock 外框尺寸和边缘，计算 Bottom/Left/Right 外框位置并验证输入 | 每个项目的布局、DIP/像素换算、多显示器拓扑、碰撞和动画命中模型 |
 | `src/GlassDock.Core/DockTrayCommandRouter.cs` | 纯函数式 Show/Exit 命令路由 | 完整菜单模型、命令状态/错误反馈及窗口系统行为 |
 | `src/GlassDock.Core/DockPerformanceRecorder.cs` | 逻辑更新时间、框架渲染回调间隔和动画时长的分布采样 | GPU 提交、DWM 呈现、物理 scanout、进程资源、应用身份和长时采样宿主 |
 | `src/GlassDock.App/IDockWindowHost.cs`、`IRenderBackend.cs` | 最小窗口宿主和渲染器接口 | 生产宿主、接口能力边界和最终渲染后端；受 M0 NO-GO 限制 |
-| `tests/GlassDock.Core.Tests/DockLayoutTests.cs` | 外框定位/非法参数、占位项、Show/Exit 分发和性能记录单测 | 项目模型不变量、排序/近期状态、启动状态、持久化/损坏恢复、身份解析、错误恢复的单测 |
+| `tests/GlassDock.Core.Tests/` | 既有外框、占位项、托盘路由和性能采样测试；M2 新增状态、身份、最近项、排序、JSON 迁移/恢复及命令契约单测；PR #1 复审后的本地 Release 结果 45/45 通过，完整解决方案 Release 构建 0 警告/0 错误 | 不包含真实 Shell、桌面焦点、应用启动、文件删除或窗口交互验证 |
 
-建议后续按以下独立工作包编排。它们是开发任务分解，不是本轮开工授权；用户明确要求生产代码实施等待批准，故当前仅列计划：
+M2 第一批已开始。剩余 Core/集成工作包按下列边界继续排期，不把已授权的纯逻辑扩大成 Shell 或桌面操作：
 
-1. **M2 Core 项目模型：** 将条目类型、稳定 ID、目标身份引用和语义分区建模；保留现有 `DockItem` 展示兼容层，先定义纯状态转换。
-2. **M2 状态与排序：** 固定/近期/文件/文件夹分类、可重排顺序、近期项去重/最多三项和空/未知状态；近期数据策略依负责人决定。
-3. **M2 应用身份契约：** 定义路径、AppUserModelID、Package family 或系统 Shell 身份的抽象与冲突结果；不以进程名作为唯一身份。Shell provider 留给 M6/M7。
-4. **M2 命令/状态转换：** 分开 Launch、RequestActivate、OpenItem、RemoveReference、Reorder；返回已接受/被系统拒绝/目标不存在/失败等确定结果，不在 Core 中直接操纵 HWND。
-5. **M2 配置格式与恢复：** 版本化序列化、缺失配置默认、非法/部分损坏输入恢复、保留可诊断错误；明确不删除或覆盖用户目标文件。
-6. **M2 Core 单元测试：** 对上述纯数据逻辑建立确定性测试，测试 malformed config、稳定排序、未知身份、重复项和状态转换；不启动窗口或注入输入。
+1. **M2 Core 第一批收尾：** 修复构建/测试发现的问题，锁定 serializer migration 与状态不变量，确保所有旧 Core 回归测试继续通过。
+2. **M2 配置存储适配器：** 后续实现有界的原子文件保存与备份/恢复策略；写入仅限应用自己的配置目录，不扫描用户文件。
+3. **M6/M7 Shell 身份和命令 provider：** 解析 AppUserModelID、Package Family、Shell shortcut、Known Folder 和 system role；真实运行时观察近期 App；在单独批准后接入 Launch/Open/Activate。
+4. **M3/M9 窗口宿主与任务栏共存：** 受 M0 NO-GO、焦点和桌面授权门槛约束，不从当前 Core PR 偷渡实现。
+5. **M4/M5 主题、材质和动画：** 遵守 M0 未冻结渲染路线；保留 FollowSystem/Light/Dark Core 设置契约，不把材质参数写成实测。
 
-工作包开始前须完成负责人对 P0/P1/P2 排期提案的评审，并由用户批准下一阶段生产代码开发。M0 窗口宿主、焦点与背景模糊 NO-GO 仍作为平台集成门槛，不阻止纯 Core 任务在批准后独立实现。
+优先级 D-09 已获原则接受并仍可调整；所有原始要求和阶段不变。Core 当前可由本次明确授权继续实施，生产 Shell、窗口和渲染集成仍受 M0 约束。
+
+### 目标身份比较约定（PR #1 审查修订）
+
+- `Value` 是交给后续 Shell provider 的目标定位值；`ComparisonKey` 是 identity provider 提供的规范比较键。Core 不访问文件系统，也不推断快捷方式、硬链接、目录联接或其他路径别名。
+- AUMID 与 Package Family Name 按 ordinal、大小写不敏感方式比较；其他身份 scheme 使用 provider 交付的比较键进行 ordinal 比较。Core 不对所有身份统一转小写。路径/`.lnk` 别名只有在 Shell provider 能可靠解析后提供同一比较键时才会去重。
+- Package Family Name 表示包家族，不能单独充当一个具体应用的身份；应用项目使用 AUMID 或 Shell Link 身份。最近应用记录只接受这两种具体应用身份。
+- v1/v2 迁移时以旧 `IdentityValue` 填充比较键；v3 显式保存两者。JSON 编解码仍不负责任何磁盘备份、恢复或路径选择。

@@ -167,6 +167,72 @@ foreach ($fix in $correctionText) {
     $row.AcceptanceCheck = $fix.Acceptance
 }
 
+$ownerDecisionLinks = @{
+    'DOCK-001' = 'D-03';
+    'DOCK-006' = 'D-04'; 'DOCK-007' = 'D-04'; 'DOCK-008' = 'D-04';
+    'DOCK-009' = 'D-02'; 'DOCK-013' = 'D-05'; 'DOCK-017' = 'D-05;D-07'; 'DOCK-018' = 'D-05;D-07';
+    'DOCK-021' = 'D-01'; 'DOCK-022' = 'D-04'; 'DOCK-023' = 'D-04'; 'DOCK-024' = 'D-04';
+    'DOCK-025' = 'D-04'; 'DOCK-026' = 'D-04'; 'DOCK-027' = 'D-04'; 'DOCK-028' = 'D-04;D-06';
+    'DOCK-029' = 'D-04;D-06'; 'DOCK-033' = 'D-03;D-05'; 'DOCK-036' = 'D-02;D-04';
+    'DOCK-037' = 'D-05'; 'DOCK-041' = 'D-03;D-05'; 'DOCK-042' = 'D-08'; 'DOCK-046' = 'D-03;D-05'
+}
+
+$decisionSeedText = @'
+ID|Seed|Acceptance
+DOCK-001|Windows product decision D-03 sets Bottom as the initial edge; Left and Right remain user selectable. Never change taskbar settings automatically. Exact geometry and collision handling remain unverified.|Given a fresh profile, when the Dock selects its initial edge, then Bottom is selected; changing to Left or Right is user initiated and does not mutate Windows taskbar settings.
+DOCK-006|D-04 permits user customization of semantic zones; adding an entry creates a Dock reference only.|Given a valid application target, when it is pinned, then a Dock reference is added and the target installation and files remain unchanged.
+DOCK-007|D-04 requires removing only the Dock reference; never delete or uninstall the target.|Given a pinned entry, when it is removed, then the Dock reference disappears while its target remains unchanged and available.
+DOCK-009|D-02 enables Recent by default, caps it at three unpinned apps, and permits only minimal local data with no upload. A missing reliable activity source means the list stays empty.|Given no reliable local activity observation exists, when Recent is projected, then no entries are fabricated; given valid observations, then no more than three unpinned targets appear and clearing removes only local Recent state.
+DOCK-013|D-05 prioritizes Windows foreground rules and maintainability; no focus-stealing workaround is permitted.|Given an app has an eligible existing window, when activation is requested, then Core emits an intent and the adapter reports foreground denial distinctly without bypassing Windows policy.
+DOCK-017|D-07 says macOS modifier mappings are not enabled by default; advanced configurable bindings may be added later.|Given a fresh profile, when input mappings are loaded, then no Option/Command compatibility mapping is active.
+DOCK-018|D-05/D-07 require safe, explicit, configurable scope; no modifier mapping or cross-integrity action is enabled by default.|Given a fresh profile, when input mappings are loaded, then hide-other-apps is unavailable until explicitly configured and approved by the user.
+DOCK-021|D-01 sets Explorer as the default Windows file-manager role, not as Finder or an Apple asset.|Given a fresh Core state, when defaults are created, then one Windows file-manager role exists in the fixed section; its actual Shell launch remains unimplemented.
+DOCK-022|D-04 preserves fixed app, recent app, and files/folders semantic sections while allowing user-controlled references and ordering.|Given entries from different semantic sections, when one section is reordered, then entries in other sections stay in place and targets are never moved or deleted.
+DOCK-028|D-06 requires explicit confirmation for Empty in the initial release, with no default bypass option.|Given the Empty Recycle Bin command is requested, when confirmation is declined, then no destructive Shell command is issued; confirming is a separate adapter action.
+DOCK-029|D-04/D-06 prohibit permanent-delete fallback for failed recycle operations; removal of a Dock reference remains separate from file deletion.|Given a recycle operation is unsupported or denied, when the adapter reports failure, then Core retains the source target and does not issue permanent deletion.
+DOCK-033|D-03 prohibits changing taskbar settings to make room; users can choose the Dock edge and hide policy.|Given a bottom-edge collision is detected, when compatibility is presented, then only Dock settings or user guidance are offered and no taskbar setting is changed.
+DOCK-036|D-02 sets Recent enabled by default, local-only, clearable and disableable; absence of an activity provider yields an empty projection.|Given the user disables or clears Recent, when state is persisted, then the setting is respected and fixed items/order remain intact; no usage data is uploaded.
+DOCK-041|D-05 requires Windows-correct fullscreen coexistence and forbids unstable focus or input bypasses.|Given DXGI exclusive fullscreen is active, when a Dock command or visibility policy is processed, then Core makes no mode/focus manipulation request and can represent adapter denial/suppression.
+DOCK-042|D-08 sets FollowSystem as the initial Windows appearance policy and permits an independent Light/Dark override; material values remain unmeasured.|Given a fresh profile, when theme preferences are read, then FollowSystem is selected; setting Light or Dark changes only Dock preference and claims no Mac visual match.
+DOCK-046|D-03 sets Bottom as the default while leaving taskbar settings untouched; collision handling must provide user-controlled Dock choices.|Given a bottom-edge space conflict, when the compatibility path is shown, then the Dock remains recoverable, the taskbar stays unchanged, and the user may select another Dock edge.
+'@ | ConvertFrom-Csv -Delimiter '|'
+
+$decisionSeeds = @{}
+foreach ($decision in $decisionSeedText) { $decisionSeeds[$decision.ID] = $decision }
+foreach ($row in $matrix) {
+    $refs = @('D-09')
+    if ($ownerDecisionLinks.ContainsKey($row.ID)) { $refs += $ownerDecisionLinks[$row.ID].Split(';') }
+    $row | Add-Member -Force -NotePropertyName OwnerDecisionRefs -NotePropertyValue (($refs | Sort-Object -Unique) -join ';')
+    if ($decisionSeeds.ContainsKey($row.ID)) {
+        $row.ProposedProductBehaviorAndAcceptanceSeed = $decisionSeeds[$row.ID].Seed
+        if (-not [string]::IsNullOrWhiteSpace($decisionSeeds[$row.ID].Acceptance)) {
+            $row.AcceptanceCheck = $decisionSeeds[$row.ID].Acceptance
+        }
+    }
+}
+
+# These entries have a tested Core-only slice. The full Dock requirement remains unaccepted.
+$coreSliceStatuses = @{
+    'DOCK-001' = 'PARTIAL - CORE PREFERENCE ONLY'
+    'DOCK-006' = 'PARTIAL - CORE ITEM STATE ONLY'
+    'DOCK-007' = 'PARTIAL - CORE REFERENCE REMOVAL ONLY'
+    'DOCK-008' = 'PARTIAL - CORE ORDER AND CODEC ONLY'
+    'DOCK-009' = 'PARTIAL - CORE RECENT STATE ONLY'
+    'DOCK-012' = 'PARTIAL - COMMAND CONTRACT ONLY'
+    'DOCK-013' = 'PARTIAL - COMMAND CONTRACT ONLY'
+    'DOCK-021' = 'PARTIAL - DEFAULT ROLE MODEL ONLY'
+    'DOCK-022' = 'PARTIAL - CORE SECTIONS AND ORDER ONLY'
+    'DOCK-036' = 'PARTIAL - CORE RECENT PREFERENCE ONLY'
+    'DOCK-042' = 'PARTIAL - APPEARANCE PREFERENCE ONLY'
+}
+foreach ($row in $matrix) {
+    $row.ImplementationStatus = if ($coreSliceStatuses.ContainsKey($row.ID)) {
+        $coreSliceStatuses[$row.ID]
+    } else {
+        'NOT STARTED'
+    }
+}
+
 foreach ($row in $matrix) {
     $audit = $auditById[$row.ID]
     if ($null -eq $audit) { throw "Missing source review for $($row.ID)" }
