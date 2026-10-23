@@ -145,6 +145,71 @@ public sealed class DockConfigurationFileStoreTests
     }
 
     [TestMethod]
+    public void BackupRotationFailureAfterCompleteTemporaryWritePreservesPrimaryAndBothBackups()
+    {
+        var store = new DockConfigurationFileStore(_testDirectory);
+        var states = Enumerable.Range(1, 3)
+            .Select(index => CreateState($"Before rotation fault {index}", DockEdge.Bottom, DockAppearancePreference.FollowSystem))
+            .ToArray();
+        foreach (var state in states)
+            Assert.IsTrue(store.Save(state).Succeeded);
+
+        var primaryPath = store.ConfigurationFilePath;
+        var backup1Path = Path.Combine(_testDirectory, DockConfigurationFileStore.Backup1FileName);
+        var backup2Path = Path.Combine(_testDirectory, DockConfigurationFileStore.Backup2FileName);
+        var originalPrimary = File.ReadAllText(primaryPath);
+        var originalBackup1 = File.ReadAllText(backup1Path);
+        var originalBackup2 = File.ReadAllText(backup2Path);
+        var faultOperations = new FailBackupRotationAfterFlushFileOperations(new PhysicalDockConfigurationFileOperations());
+        var faultedStore = new DockConfigurationFileStore(_testDirectory, faultOperations);
+
+        var failedSave = faultedStore.Save(CreateState("Rejected after rotation fault", DockEdge.Right, DockAppearancePreference.Dark));
+
+        Assert.AreEqual(DockConfigurationStoreSaveStatus.IoFailure, failedSave.Status);
+        Assert.IsTrue(faultOperations.FaultWasInjected, "The fault must occur after the complete temporary file was flushed.");
+        Assert.AreEqual(originalPrimary, File.ReadAllText(primaryPath));
+        Assert.AreEqual(originalBackup1, File.ReadAllText(backup1Path));
+        Assert.AreEqual(originalBackup2, File.ReadAllText(backup2Path));
+        Assert.AreEqual(0, Directory.GetFiles(_testDirectory, ".dock-config.*.tmp").Length);
+
+        var reloaded = new DockConfigurationFileStore(_testDirectory).Load();
+        Assert.AreEqual(DockConfigurationStoreLoadStatus.LoadedPrimary, reloaded.Status);
+        Assert.AreEqual(states[2].PinnedApplications[^1].Id, reloaded.State.PinnedApplications[^1].Id);
+    }
+
+    [TestMethod]
+    public void ReplaceFailureAfterSuccessfulBackupRotationKeepsLastConfigurationLoadableAfterRestart()
+    {
+        var store = new DockConfigurationFileStore(_testDirectory);
+        var states = Enumerable.Range(1, 3)
+            .Select(index => CreateState($"Before replace fault {index}", DockEdge.Bottom, DockAppearancePreference.FollowSystem))
+            .ToArray();
+        foreach (var state in states)
+            Assert.IsTrue(store.Save(state).Succeeded);
+
+        var backup1Path = Path.Combine(_testDirectory, DockConfigurationFileStore.Backup1FileName);
+        var backup2Path = Path.Combine(_testDirectory, DockConfigurationFileStore.Backup2FileName);
+        var faultOperations = new FailReplaceAfterSuccessfulBackupRotationFileOperations(
+            new PhysicalDockConfigurationFileOperations());
+        var faultedStore = new DockConfigurationFileStore(_testDirectory, faultOperations);
+
+        var failedSave = faultedStore.Save(CreateState("Rejected after replace fault", DockEdge.Right, DockAppearancePreference.Dark));
+
+        Assert.AreEqual(DockConfigurationStoreSaveStatus.IoFailure, failedSave.Status);
+        Assert.IsTrue(faultOperations.RotationCompleted, "The backup rotation must finish before File.Replace is faulted.");
+        Assert.IsTrue(faultOperations.ReplaceWasFaulted);
+        Assert.IsFalse(File.Exists(backup1Path));
+        Assert.IsTrue(File.Exists(backup2Path));
+        Assert.AreEqual(0, Directory.GetFiles(_testDirectory, ".dock-config.*.tmp").Length);
+
+        // A newly constructed store models a process restart. The failed save must leave the old primary usable.
+        var restartedStore = new DockConfigurationFileStore(_testDirectory);
+        var reloaded = restartedStore.Load();
+        Assert.AreEqual(DockConfigurationStoreLoadStatus.LoadedPrimary, reloaded.Status);
+        Assert.AreEqual(states[2].PinnedApplications[^1].Id, reloaded.State.PinnedApplications[^1].Id);
+    }
+
+    [TestMethod]
     public void PermissionFailureIsReportedWithoutChangingSystemPermissions()
     {
         var deniedStore = new DockConfigurationFileStore(_testDirectory, new DeniedDirectoryFileOperations());
@@ -205,6 +270,75 @@ public sealed class DockConfigurationFileStoreTests
         public void FlushToDisk(Stream stream) => inner.FlushToDisk(stream);
         public void Replace(string sourcePath, string destinationPath, string backupPath) => inner.Replace(sourcePath, destinationPath, backupPath);
         public void Move(string sourcePath, string destinationPath, bool overwrite) => inner.Move(sourcePath, destinationPath, overwrite);
+        public void Delete(string path) => inner.Delete(path);
+    }
+
+    private sealed class FailBackupRotationAfterFlushFileOperations(IDockConfigurationFileOperations inner)
+        : IDockConfigurationFileOperations
+    {
+        private bool _temporaryFileFlushed;
+        public bool FaultWasInjected { get; private set; }
+
+        public void CreateDirectory(string path) => inner.CreateDirectory(path);
+        public bool FileExists(string path) => inner.FileExists(path);
+        public long GetLength(string path) => inner.GetLength(path);
+        public Stream OpenRead(string path) => inner.OpenRead(path);
+        public Stream CreateNewWriteThrough(string path) => inner.CreateNewWriteThrough(path);
+        public void FlushToDisk(Stream stream)
+        {
+            inner.FlushToDisk(stream);
+            _temporaryFileFlushed = true;
+        }
+        public void Replace(string sourcePath, string destinationPath, string backupPath) => inner.Replace(sourcePath, destinationPath, backupPath);
+        public void Move(string sourcePath, string destinationPath, bool overwrite)
+        {
+            if (_temporaryFileFlushed
+                && Path.GetFileName(sourcePath) == DockConfigurationFileStore.Backup1FileName
+                && Path.GetFileName(destinationPath) == DockConfigurationFileStore.Backup2FileName)
+            {
+                FaultWasInjected = true;
+                throw new IOException("Deterministic backup rotation failure before mutation.");
+            }
+
+            inner.Move(sourcePath, destinationPath, overwrite);
+        }
+        public void Delete(string path) => inner.Delete(path);
+    }
+
+    private sealed class FailReplaceAfterSuccessfulBackupRotationFileOperations(IDockConfigurationFileOperations inner)
+        : IDockConfigurationFileOperations
+    {
+        private bool _temporaryFileFlushed;
+        public bool RotationCompleted { get; private set; }
+        public bool ReplaceWasFaulted { get; private set; }
+
+        public void CreateDirectory(string path) => inner.CreateDirectory(path);
+        public bool FileExists(string path) => inner.FileExists(path);
+        public long GetLength(string path) => inner.GetLength(path);
+        public Stream OpenRead(string path) => inner.OpenRead(path);
+        public Stream CreateNewWriteThrough(string path) => inner.CreateNewWriteThrough(path);
+        public void FlushToDisk(Stream stream)
+        {
+            inner.FlushToDisk(stream);
+            _temporaryFileFlushed = true;
+        }
+        public void Replace(string sourcePath, string destinationPath, string backupPath)
+        {
+            Assert.IsTrue(_temporaryFileFlushed, "Replacement can only be faulted after the temporary file is durable.");
+            Assert.IsTrue(RotationCompleted, "Replacement can only be faulted after backup rotation succeeds.");
+            ReplaceWasFaulted = true;
+            throw new IOException("Deterministic File.Replace failure before mutation.");
+        }
+        public void Move(string sourcePath, string destinationPath, bool overwrite)
+        {
+            inner.Move(sourcePath, destinationPath, overwrite);
+            if (_temporaryFileFlushed
+                && Path.GetFileName(sourcePath) == DockConfigurationFileStore.Backup1FileName
+                && Path.GetFileName(destinationPath) == DockConfigurationFileStore.Backup2FileName)
+            {
+                RotationCompleted = true;
+            }
+        }
         public void Delete(string path) => inner.Delete(path);
     }
 
