@@ -33,7 +33,8 @@
 | M0-27 | WinUI 公开 HWND region 输入候选 | `SetWindowRgn` opt-in 变体三边 18/18 事件测试通过，Bottom / 58 DIP / 浅深 2 帧成功捕获；边缘/shadow/DPI 仍未充分验收 | PASS |
 | M0-28 | 真正 DXGI 独占全屏与 Dock 共存 | 允许 Dock 在 DXGI 独占期间隐藏。记录显示 WPF 前台进程为 Dock PID；WinUI 前台为 Dock 且 DXGI 独占退出。故默认启动路径对“不抢焦点/不影响独占”为 FAIL；WPF 实际输入拦截和退出后自动恢复仍 BLOCKED | FAIL |
 | M0-29 | 本轮 M0 缺口补测代码/脚本的远程 CI | 提交 `8be36ea111e35875dbc3ff8cab96474a36e6d413` 的 [Windows CI run 39896333410](https://github.com/LYL-Z/GlassDock-Win/actions/runs/39896333410) Build/Test 均成功；Build 0 警告/0 错误，Core 11/11；仅 Actions runtime 弃用提示 | PASS |
-| M0-30 | 当前视觉候选、非激活启动候选和应用侧遥测代码 | 当前工作树 Release build 11 项目通过、Core 18/18；候选未启动，未生成新视觉捕获、全屏运行或性能 trace；当前改动尚无对应远程 CI | BLOCKED |
+| M0-30 | 当前视觉候选、非激活启动候选和应用侧遥测代码 | 提交 `8f6ca23ecb159dd20e71e0ef303a691cda9293ab` 本地 Release build 11 项目通过、Core 18/18，远程 run `39924864083` Build/Test 均成功；候选未启动，未生成新视觉捕获、全屏运行或性能 trace | BLOCKED |
+| M0-31 | 本轮架构探针精确 SHA 远程 CI | `8f6ca23ecb159dd20e71e0ef303a691cda9293ab` 的 [Windows CI run 39924864083](https://github.com/LYL-Z/GlassDock-Win/actions/runs/39924864083)；workflow、build-and-test job、Build、Test 均 completed/success | PASS |
 
 ## 验收结论
 

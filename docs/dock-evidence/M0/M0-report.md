@@ -3,7 +3,7 @@
 - 更新日期：2026-10-23（测试记录使用 UTC 文件夹名）
 - 仓库：`D:\MacOS\GlassDock-Win`
 - 当前结论：**M0 未通过；不进入 M1；不冻结 WPF、WinUI 3 或 Win32 + DirectComposition。**
-- M0 验证代码、脚本与证据交付提交：`8be36ea111e35875dbc3ff8cab96474a36e6d413`；对应 Windows CI run `39896333410` 的 Build/Test 均成功。本报告和矩阵记录该精确提交的结果；M0 仍未通过整体验收。
+- 桌面测试证据基线提交 `8be36ea111e35875dbc3ff8cab96474a36e6d413` 的 Windows CI run `39896333410` Build/Test 成功。本轮架构探针代码提交 `8f6ca23ecb159dd20e71e0ef303a691cda9293ab` 的 run `39924864083` Build/Test 也成功；两个提交均不代表 M0 整体验收通过。
 - 本次实际执行了已获批准的输入路由、WGC 视觉、窗口共存、显示刷新、托盘/配置恢复及 DXGI 独占全屏测试。未提权、未启动 M1、未改 LICENSE、未创建 Release。
 - 2026-10-23 本次续作只实施了默认关闭的系统材质/非激活启动候选、应用侧性能记录器、托盘命令路由单测及文档/脚本修订；没有启动任何窗口、输入、全屏或桌面捕获。新的候选尚无运行时视觉或共存证据。
 
@@ -96,7 +96,8 @@ WinUI 候选实现调用公开 User32 `SetWindowRgn`，用公开 GDI `CreateRoun
 | 2026-10-23 当前工作树 Release solution build | PASS；11 个项目，0 警告、0 错误，退出码 0；日志 `D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\architecture-20261023\build.log`；SDK 版本 `10.0.402` |
 | 2026-10-23 Core 单元测试 | PASS；18/18，0 失败、0 跳过，退出码 0；日志 `D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\architecture-20261023\test.log` |
 | 2026-10-23 PowerShell 静态解析 | PASS；20 个脚本，0 ParserError；结果 `D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\architecture-20261023\powershell-parse.txt` |
-| 差异/边界复核 | `git diff --check` PASS；LICENSE 与 HEAD 无差异；检查时无 GlassDock PoC 进程；记录在同一目录的 `diff-check.txt`、`license-unchanged.txt`、`process-check.txt` |
+| 2026-10-23 精确 SHA 远程 CI | 提交 `8f6ca23ecb159dd20e71e0ef303a691cda9293ab`；run `39924864083`；Windows CI `build-and-test`、Build 和 Test 步骤均 completed/success；API 状态快照 `D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\architecture-20261023\remote-ci.json`；[精确运行](https://github.com/LYL-Z/GlassDock-Win/actions/runs/39924864083) |
+| 差异/边界复核 | `git diff --check` PASS；LICENSE 与 HEAD 无差异；凭据模式扫描 16 个改动文件为 0 命中；检查时无 GlassDock PoC 进程；记录在同一目录的 `diff-check.txt`、`license-unchanged.txt`、`changed-files-review.txt`、`process-check.txt` |
 | DWM 被动探针 | PASS；16/16 `S_OK`；仅全局合成指标 |
 | 桌面测试恢复 | 最近一次视觉候选恢复检查 14/14 PASS；点击路由候选 12/12 PASS；无测试进程残留 |
 
@@ -111,7 +112,7 @@ WinUI 候选实现调用公开 User32 `SetWindowRgn`，用公开 GDI `CreateRoun
 
 远程 CI 已核实的精确提交：基线 `3a6ca88b6925f60ecea5971f8781b7482153ed0c` 的 [Windows CI run 39767098768](https://github.com/LYL-Z/GlassDock-Win/actions/runs/39767098768) 成功；实现提交 `b4d78b8be3f47f08febbf261c720e6dc318e170a` 的 [run 39800785724](https://github.com/LYL-Z/GlassDock-Win/actions/runs/39800785724) 成功；本轮 M0 缺口补测提交 `8be36ea111e35875dbc3ff8cab96474a36e6d413` 的 [run 39896333410](https://github.com/LYL-Z/GlassDock-Win/actions/runs/39896333410) 成功。该最新 run 的 Build 为 0 警告/0 错误，Test 为 11/11；GitHub 另有 Actions Node.js 20 弃用及 setup-dotnet 依赖 `punycode` 弃用提示，不是项目构建警告，步骤均成功。每项远程结果仅适用于所列 SHA。
 
-本次 2026-10-23 续作的 18/18 本地结果只对应当前未提交工作树；尚未提交或触发新的远程 CI，不能把前述旧 SHA 的 Actions 结果套用到这些改动。
+本次续作已推送为精确提交 `8f6ca23ecb159dd20e71e0ef303a691cda9293ab`；对应远程 run `39924864083` 的 `build-and-test`、Build 和 Test 均成功。远程 CI 只证明该提交的构建/测试工作流通过，不证明候选材质已运行或桌面场景验收通过。
 
 ## 8. WinUI 与 WPF 技术结论
 
@@ -138,7 +139,7 @@ WPF 与 WinUI 都有 opt-in 系统材质候选且通过构建，视觉能力仍�
 
 当前已证实：WPF 默认点击路由 18/18 通过；WinUI 默认透明区 FAIL，但其公开 region 候选在当前限定矩阵中 18/18 通过；两套程序均取得真实 WGC 帧；配置恢复 6/6 通过；普通最大化/无边框共存 4/4 通过；120/240Hz 模式及窗口生存测试通过；DWM 全局计时可被动采集。WinUI tray Show/Exit 路由单测 3/3 通过；应用侧性能分位数统计单测通过。
 
-仍阻止验收的事项：基线两栈均无目标背景模糊；新增材质 PoC 尚未真实显示/捕获；WPF 在独占全屏时保持 DXGI exclusive 但前台 PID 为 Dock；WinUI 启动后成为前台并使 DXGI exclusive 退出；独占下实际游戏输入与退出后的自动恢复未测；WinUI tray 实际键盘/鼠标选择与辅助功能路径未测；100/150/200% DPI 和多屏未测；应用计时 trace、独立进程 Present 与面板 scanout 未获得；正式许可证继续待权利人决定；当前工作树的新改动尚无远程 CI。
+仍阻止验收的事项：基线两栈均无目标背景模糊；新增材质 PoC 尚未真实显示/捕获；WPF 在独占全屏时保持 DXGI exclusive 但前台 PID 为 Dock；WinUI 启动后成为前台并使 DXGI exclusive 退出；独占下实际游戏输入与退出后的自动恢复未测；WinUI tray 实际键盘/鼠标选择与辅助功能路径未测；100/150/200% DPI 和多屏未测；应用计时 trace、独立进程 Present 与面板 scanout 未获得；正式许可证继续待权利人决定。当前架构探针代码已有本地和精确 SHA 远程 CI 证据，但没有运行时材质、全屏或 Dock 性能证据。
 
 **结论：M0 不通过，M1 不开始，技术路线不冻结。** WPF Dock 不可见不是全屏失败，但其成为前台是当前默认行为缺陷；WinUI 默认激活/独占状态变化也是缺陷。非激活启动与系统材质候选只经过编译。硬件缺项不写 PASS，也不自动豁免；A/B/C 分级建议待用户确认后再调整阶段门槛。
 
