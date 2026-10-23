@@ -3,7 +3,7 @@
 - 更新日期：2026-10-22（测试记录使用 UTC 文件夹名，部分时间显示为 2026-10-23 UTC）
 - 仓库：`D:\MacOS\GlassDock-Win`
 - 当前结论：**M0 未通过；不进入 M1；不冻结 WPF、WinUI 3 或 Win32 + DirectComposition。**
-- 当前工作树起始 HEAD：`a1419b7a8be8e6f90a93bd5311cab868797034b6`。本报告记载其后的未提交 M0 代码和文档改动；没有把这些改动说成已通过远程 CI。
+- M0 验证代码、脚本与证据交付提交：`8be36ea111e35875dbc3ff8cab96474a36e6d413`；对应 Windows CI run `39896333410` 的 Build/Test 均成功。本报告和矩阵记录该精确提交的结果；M0 仍未通过整体验收。
 - 本次实际执行了已获批准的输入路由、WGC 视觉、窗口共存、显示刷新、托盘/配置恢复及 DXGI 独占全屏测试。未提权、未启动 M1、未改 LICENSE、未创建 Release。
 
 ## 1. 环境与证据边界
@@ -102,7 +102,7 @@ WinUI 候选实现调用公开 User32 `SetWindowRgn`，用公开 GDI `CreateRoun
 
 指定提交 `3a6ca88b6925f60ecea5971f8781b7482153ed0c` 在 D 盘独立干净克隆中完成 locked restore、Release build 和 Core 11/11；该结果仅适用于该 SHA，不代表当前改动。路径：`D:\MacOS\GlassDock-Win\.local\clean-clones\3a6ca88b6925f60ecea5971f8781b7482153ed0c`。
 
-远程 CI 已核实的精确提交：基线 `3a6ca88b6925f60ecea5971f8781b7482153ed0c` 的 [Windows CI run 39767098768](https://github.com/LYL-Z/GlassDock-Win/actions/runs/39767098768) 成功；实现提交 `b4d78b8be3f47f08febbf261c720e6dc318e170a` 的 [run 39800785724](https://github.com/LYL-Z/GlassDock-Win/actions/runs/39800785724) 成功。Build 和 Test 均成功的声明只针对各自 SHA；当前未提交改动没有远程 CI 结果。
+远程 CI 已核实的精确提交：基线 `3a6ca88b6925f60ecea5971f8781b7482153ed0c` 的 [Windows CI run 39767098768](https://github.com/LYL-Z/GlassDock-Win/actions/runs/39767098768) 成功；实现提交 `b4d78b8be3f47f08febbf261c720e6dc318e170a` 的 [run 39800785724](https://github.com/LYL-Z/GlassDock-Win/actions/runs/39800785724) 成功；本轮 M0 缺口补测提交 `8be36ea111e35875dbc3ff8cab96474a36e6d413` 的 [run 39896333410](https://github.com/LYL-Z/GlassDock-Win/actions/runs/39896333410) 成功。该最新 run 的 Build 为 0 警告/0 错误，Test 为 11/11；GitHub 另有 Actions Node.js 20 弃用及 setup-dotnet 依赖 `punycode` 弃用提示，不是项目构建警告，步骤均成功。每项远程结果仅适用于所列 SHA。
 
 ## 8. WinUI 与 WPF 技术结论
 

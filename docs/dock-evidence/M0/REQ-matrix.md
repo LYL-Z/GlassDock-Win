@@ -32,7 +32,7 @@
 | M0-26 | 安全/探针提交的精确 SHA 远程 CI | `b4d78b8be3f47f08febbf261c720e6dc318e170a` 的 Windows CI run `39800785724` Build/Test 成功；[精确运行](https://github.com/LYL-Z/GlassDock-Win/actions/runs/39800785724)；不覆盖当前改动 | PASS |
 | M0-27 | WinUI 公开 HWND region 输入候选 | `SetWindowRgn` opt-in 变体三边 18/18 事件测试通过，Bottom / 58 DIP / 浅深 2 帧成功捕获；边缘/shadow/DPI 仍未充分验收 | PASS |
 | M0-28 | 真正 DXGI 独占全屏与 Dock 共存 | DXGI 进入独占得到确认；WPF 保持独占但 WGC 帧不显示 Dock、命中 API 指向 Dock；WinUI 启动后退出独占。不是游戏矩阵且 WPF 输入未验证 | BLOCKED |
-| M0-29 | 当前工作树改动的远程 CI | 当前新增和未提交的代码/文档没有对应远程 CI run | NOT TESTED |
+| M0-29 | 本轮 M0 缺口补测代码/脚本的远程 CI | 提交 `8be36ea111e35875dbc3ff8cab96474a36e6d413` 的 [Windows CI run 39896333410](https://github.com/LYL-Z/GlassDock-Win/actions/runs/39896333410) Build/Test 均成功；Build 0 警告/0 错误，Core 11/11；仅 Actions runtime 弃用提示 | PASS |
 
 ## 验收结论
 
