@@ -39,6 +39,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GlassDock.Persistence", "sr
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GlassDock.Persistence.Tests", "tests\GlassDock.Persistence.Tests\GlassDock.Persistence.Tests.csproj", "{87DC380E-6CE4-47A3-BCC1-BBD8A8E50440}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GlassDock.Windows.Tests", "tests\GlassDock.Windows.Tests\GlassDock.Windows.Tests.csproj", "{3804BF3E-7473-4C4E-A295-4FCE59DFE2C3}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -205,6 +207,18 @@ Global
 		{87DC380E-6CE4-47A3-BCC1-BBD8A8E50440}.Release|x64.Build.0 = Release|Any CPU
 		{87DC380E-6CE4-47A3-BCC1-BBD8A8E50440}.Release|x86.ActiveCfg = Release|Any CPU
 		{87DC380E-6CE4-47A3-BCC1-BBD8A8E50440}.Release|x86.Build.0 = Release|Any CPU
+		{3804BF3E-7473-4C4E-A295-4FCE59DFE2C3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3804BF3E-7473-4C4E-A295-4FCE59DFE2C3}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3804BF3E-7473-4C4E-A295-4FCE59DFE2C3}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{3804BF3E-7473-4C4E-A295-4FCE59DFE2C3}.Debug|x64.Build.0 = Debug|Any CPU
+		{3804BF3E-7473-4C4E-A295-4FCE59DFE2C3}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{3804BF3E-7473-4C4E-A295-4FCE59DFE2C3}.Debug|x86.Build.0 = Debug|Any CPU
+		{3804BF3E-7473-4C4E-A295-4FCE59DFE2C3}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3804BF3E-7473-4C4E-A295-4FCE59DFE2C3}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3804BF3E-7473-4C4E-A295-4FCE59DFE2C3}.Release|x64.ActiveCfg = Release|Any CPU
+		{3804BF3E-7473-4C4E-A295-4FCE59DFE2C3}.Release|x64.Build.0 = Release|Any CPU
+		{3804BF3E-7473-4C4E-A295-4FCE59DFE2C3}.Release|x86.ActiveCfg = Release|Any CPU
+		{3804BF3E-7473-4C4E-A295-4FCE59DFE2C3}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -225,5 +239,6 @@ Global
 		{ABF4C6AC-DAA6-4635-9210-C3B68427E14B} = {8E8EEFA0-3706-E30B-228C-164E24F7434F}
 		{6528BFD8-E204-4CA9-9D5F-8710B98F1756} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{87DC380E-6CE4-47A3-BCC1-BBD8A8E50440} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{3804BF3E-7473-4C4E-A295-4FCE59DFE2C3} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal
