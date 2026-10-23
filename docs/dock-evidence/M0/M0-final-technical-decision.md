@@ -43,7 +43,7 @@
 
 ## 工程验证边界
 
-- 本地 `dotnet restore --locked-mode`、Release solution build（11 项目、0 警告/错误）及 Core 单测（18/18）在本轮桌面试验前通过；日志在 `.local/evidence/m0-final-prep/`。脚本修复后另行执行 PowerShell 静态解析，不运行桌面程序。
-- GitHub Actions 的已通过记录仍属于之前的精确提交，不覆盖当前工作树变更。当前尚无新 commit，也没有这些改动对应的远程 CI 结果。
+- 本地 `dotnet restore --locked-mode`、Release solution build（11 项目、0 警告/错误）及 Core 单测（18/18）在本轮桌面试验前通过；日志在 `.local/evidence/m0-final-prep/`。脚本修复后 21 个 PowerShell 脚本解析无错误，不运行桌面程序。
+- 最终代码/报告提交 `c8b11d170673fdf7b2ea7f7b3b470344f46e75b2` 已推送；精确 GitHub Actions [Windows CI run 39946556825](https://github.com/LYL-Z/GlassDock-Win/actions/runs/39946556825) 中 Build 与 Test 均成功。该 CI 不执行桌面交互/视觉场景。CI 附注只有 Actions Node.js 20 弃用提醒。
 - LICENSE 未改，未创建 Release，未改写 Git 历史。
 - 当前设备以外的 DPI/多显示器/刷新率组合、真实游戏输入/恢复、Dock 自身帧时序及长期运行仍为原需求状态；见 [需求追踪矩阵](REQ-matrix.md) 与 [M0→M1 迁移矩阵](M0-to-M1-requirement-migration.md)。

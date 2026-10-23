@@ -38,7 +38,7 @@
 | M0-32 | 三路线 18 场景玻璃视觉捕获与判读 | 用户以约定短语授权后，WGC 捕获 18/18；人工判读 0/18 visual pass、18/18 visual fail。所有场景背景图案仍清晰、矩形宿主边线可见；静态内容完整。证据 .local/evidence/m0-gap/visual/20261023T091558Z/visual-comparison-report.md 与 visual-assessment.csv | FAIL |
 | M0-33 | 非激活启动及 Dock 自身实际性能 trace | WPF 非激活启动进程日志存在，但脚本未定位可见 HWND 后中止；结果 BLOCKED（探针限制），WinUI 未执行；无 Dock P50/P95/P99 实际运行数据 | BLOCKED |
 
-最终运行补充（不新增需求 ID）：Composition control 的真实 blur 为 PASS；项目 Dock 真实 blur 为 FAIL；WPF non-activating 观察 BLOCKED；WinUI non-activating 与 DXGI non-activating 全屏 NOT TESTED。由于首次脚本未通过恢复验收，未运行 companion。证据和明确的 NO-GO 结论见 [M0 最终技术决策报告](M0-final-technical-decision.md)。当前工作树没有针对最终变更的 GitHub Actions 结果；历史 CI 仅适用于矩阵中列出的精确 SHA。
+最终运行补充（不新增需求 ID）：Composition control 的同窗 blur effect 为 PASS，不证明桌面采样；项目 Dock 外部 backdrop blur 为 FAIL；WPF non-activating 观察 BLOCKED；WinUI non-activating 与 DXGI non-activating 全屏 NOT TESTED。由于首次脚本未通过恢复验收，未运行 companion。证据和明确的 NO-GO 结论见 [M0 最终技术决策报告](M0-final-technical-decision.md)。最终代码/报告提交 `c8b11d170673fdf7b2ea7f7b3b470344f46e75b2` 的 [GitHub Actions run 39946556825](https://github.com/LYL-Z/GlassDock-Win/actions/runs/39946556825) Build/Test 成功；CI 不运行桌面交互验证。
 
 ## 验收结论
 

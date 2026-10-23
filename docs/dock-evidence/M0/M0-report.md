@@ -104,6 +104,7 @@ WinUI 候选实现调用公开 User32 `SetWindowRgn`，用公开 GDI `CreateRoun
 | 2026-10-23 Core 单元测试 | PASS；18/18，0 失败、0 跳过，退出码 0；日志 `D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\architecture-20261023\test.log` |
 | 2026-10-23 PowerShell 静态解析 | PASS；20 个脚本，0 ParserError；结果 `D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\architecture-20261023\powershell-parse.txt` |
 | 2026-10-23 精确 SHA 远程 CI | 提交 `8f6ca23ecb159dd20e71e0ef303a691cda9293ab`；run `39924864083`；Windows CI `build-and-test`、Build 和 Test 步骤均 completed/success；API 状态快照 `D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\architecture-20261023\remote-ci.json`；[精确运行](https://github.com/LYL-Z/GlassDock-Win/actions/runs/39924864083) |
+| 最终收尾提交远程 CI | 提交 `c8b11d170673fdf7b2ea7f7b3b470344f46e75b2`；[run 39946556825](https://github.com/LYL-Z/GlassDock-Win/actions/runs/39946556825)；Build/Test 均成功；仅 Actions Node.js 20 弃用附注；没有运行桌面交互测试 |
 | 差异/边界复核 | `git diff --check` PASS；LICENSE 与 HEAD 无差异；凭据模式扫描 16 个改动文件为 0 命中；检查时无 GlassDock PoC 进程；记录在同一目录的 `diff-check.txt`、`license-unchanged.txt`、`changed-files-review.txt`、`process-check.txt` |
 | DWM 被动探针 | PASS；16/16 `S_OK`；仅全局合成指标 |
 | 历史桌面测试恢复 | 此前视觉候选 14/14、点击路由候选 12/12；不代表最终有界实验恢复通过 |
@@ -177,7 +178,7 @@ WPF 默认透明路由证据较强，但其独占全屏窗口虽保持 DXGI excl
 
 **最终结论：NO-GO；M0 不进入 M1，技术路线不冻结。** Composition 在独立窗口的 blur 能力有正面证据，但当前目标 Dock HWND 没有真实模糊；非激活焦点行为也未产生有效观测结果。当前必要的最小后续动作是：修正后的 harness 通过静态检查后，在新的单独授权下，仅对目标 Dock HWND 做一次 window-level/system-backdrop 实验并确认非激活窗口可见 HWND；仍无 blur 或无法保焦点则停止当前路线，再评估 WPF Visual Layer 与原生后端。不得追加视觉矩阵。
 
-本轮本地 Release solution build（11 项目、0 warning/error）和 Core 单测（18/18）在桌面实验前通过；之前记录的远程 CI 只适用于它所列的旧提交 SHA。此次工作树变更未提交、未推送、没有精确 SHA 的 GitHub Actions 结果。LICENSE、Git 历史和 Release 状态均未改变。
+本轮本地 Release solution build（11 项目、0 warning/error）和 Core 单测（18/18）在桌面实验前通过；21 个 PowerShell 脚本静态解析无错误。最终收尾提交 `c8b11d170673fdf7b2ea7f7b3b470344f46e75b2` 已推送，精确 Windows CI run `39946556825` Build/Test 均成功；该 CI 不替代桌面实测。LICENSE 未改，未创建 Release，未改写历史。
 
 # 历史报告说明
 

@@ -9,7 +9,7 @@
 - **M0-01 / M0-06：** Composition control 的条纹和模糊面板属于同一 HWND/visual tree，同窗 blur effect 可见；这不证明桌面或跨窗采样。目标 Dock HWND 未显示对下层窗口的 backdrop blur，当前 Dock 集成候选 FAIL；WinUI Composition API 整体支持/不支持外部采样仍未被本次对照判定。证据 `.local/evidence/m0-final/20261023T111923Z-94bc33e6/`。
 - **M0-10 / M0-33：** WPF 非激活启动观察因进程 HWND 发现方式未取得有效结果而 BLOCKED；WinUI 非激活启动和 DXGI companion 未测试。桌面恢复总标记 false 是环境变量清理缺陷，实际登记进程、前台、指针、任务栏、显示边界和 watchdog 状态检查通过。
 - **M0-25：** 本轮揭示测试 harness 的进程环境变量恢复缺陷；代码仅作静态修正，未重跑，不改变本轮恢复结果为 PASS。
-- **M0-30 / M0-31：** 之前的本机 Release/单测和远程 CI 仅覆盖各自记录的工作树或精确 SHA；当前最后修改尚未提交或触发远程 CI。
+- **M0-30 / M0-31：** 最终收尾提交 `c8b11d170673fdf7b2ea7f7b3b470344f46e75b2` 已推送；其 [Windows CI run 39946556825](https://github.com/LYL-Z/GlassDock-Win/actions/runs/39946556825) 的 Build/Test 成功。CI 不验证桌面视觉或输入。
 - 本次最终阶段建议：**NO-GO，不进入 M1，不冻结技术路线。** 仍保留原 ID 和后续验收，不以阶段拆分豁免原始功能要求。
 
 | ID | 原始 M0 要求 | 原始状态及证据（简记） | 新归属 | 原要求保留的风险 / 验收条件 |
