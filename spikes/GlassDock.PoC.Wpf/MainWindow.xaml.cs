@@ -19,6 +19,7 @@ namespace GlassDock.PoC.Wpf;
 public partial class MainWindow : System.Windows.Window, IDockWindowHost
 {
     private const int WmNcHitTest = 0x0084;
+    private const int WmM0TestHide = 0x8000 + 42;
     private const int HtTransparent = -1;
     private const ulong M0SendInputMarker = 0x53444F43;
     private readonly string _settingsPath = Path.Combine(GetStateRoot(), "wpf-poc-settings.json");
@@ -327,6 +328,14 @@ public partial class MainWindow : System.Windows.Window, IDockWindowHost
 
     private nint WindowProc(nint hwnd, int message, nint wParam, nint lParam, ref bool handled)
     {
+        if (message == WmM0TestHide &&
+            string.Equals(Environment.GetEnvironmentVariable("GLASSDOCK_M0_TEST_ALLOW_HIDE"), "1", StringComparison.Ordinal))
+        {
+            Hide();
+            handled = true;
+            return IntPtr.Zero;
+        }
+
         if (message == WmNcHitTest)
         {
             var packed = lParam.ToInt64();

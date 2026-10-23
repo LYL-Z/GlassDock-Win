@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 
 [StructLayout(LayoutKind.Sequential)] public struct GlassDockM0SafetyRect { public int Left; public int Top; public int Right; public int Bottom; }
+[StructLayout(LayoutKind.Sequential)] public struct GlassDockM0SafetyPoint { public int X; public int Y; }
 [StructLayout(LayoutKind.Sequential)] public struct GlassDockM0SafetyMouseInput { public int Dx; public int Dy; public uint MouseData; public uint Flags; public uint Time; public UIntPtr ExtraInfo; }
 [StructLayout(LayoutKind.Explicit)] public struct GlassDockM0SafetyInputUnion { [FieldOffset(0)] public GlassDockM0SafetyMouseInput Mouse; }
 [StructLayout(LayoutKind.Sequential)] public struct GlassDockM0SafetyInput { public uint Type; public GlassDockM0SafetyInputUnion Data; }
@@ -15,18 +16,21 @@ public static class GlassDockM0SafetyNative
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr hwnd, StringBuilder text, int maxCount);
     [DllImport("user32.dll", SetLastError=true)] public static extern bool GetWindowRect(IntPtr hwnd, out GlassDockM0SafetyRect rect);
+    [DllImport("user32.dll", SetLastError=true)] public static extern bool GetCursorPos(out GlassDockM0SafetyPoint point);
+    [DllImport("user32.dll", SetLastError=true)] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hwnd);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string className, string windowName);
     [DllImport("user32.dll")] public static extern int GetSystemMetrics(int index);
+    [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr dpiContext);
     [DllImport("user32.dll", SetLastError=true)] public static extern bool PostMessage(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll", SetLastError=true)] public static extern uint SendInput(uint count, GlassDockM0SafetyInput[] inputs, int size);
 
     public static string GetTitle(IntPtr hwnd)
     {
         var text = new StringBuilder(512);
-        _ = GetWindowText(hwnd, text, text.Capacity);
+        GetWindowText(hwnd, text, text.Capacity);
         return text.ToString();
     }
 }
@@ -37,8 +41,10 @@ public static class GlassDockM0SafetyNative
 $script:M0InteractiveTestEnvironmentNames = @(
     'GLASSDOCK_POC_STATE_ROOT',
     'GLASSDOCK_M0_INPUT_TRACE',
+    'GLASSDOCK_M0_TEST_ALLOW_HIDE',
     'GLASSDOCK_POC_ITEM_COUNT',
-    'GLASSDOCK_POC_ICON_SIZE'
+    'GLASSDOCK_POC_ICON_SIZE',
+    'GLASSDOCK_M0_TEST_ROUNDED_REGION'
 )
 
 function Confirm-M0InteractiveTest {
@@ -57,6 +63,10 @@ function Confirm-M0InteractiveTest {
 }
 
 function Get-M0InteractiveDesktopSnapshot {
+    # Keep pre/post rectangles and SendInput coordinates in the same physical-pixel space.
+    # UI Automation can otherwise change the caller thread's DPI virtualization context.
+    $previousDpiContext = [GlassDockM0SafetyNative]::SetThreadDpiAwarenessContext([IntPtr](-4))
+    $dpiContextSwitchSucceeded = $previousDpiContext -ne [IntPtr]::Zero
     $foreground = [GlassDockM0SafetyNative]::GetForegroundWindow()
     [uint32]$foregroundPid = 0
     if ($foreground -ne [IntPtr]::Zero) { [void][GlassDockM0SafetyNative]::GetWindowThreadProcessId($foreground, [ref]$foregroundPid) }
@@ -65,6 +75,8 @@ function Get-M0InteractiveDesktopSnapshot {
     $taskbar = [GlassDockM0SafetyNative]::FindWindow('Shell_TrayWnd', $null)
     $taskbarRect = [GlassDockM0SafetyRect]::new()
     $taskbarHasRect = $taskbar -ne [IntPtr]::Zero -and [GlassDockM0SafetyNative]::GetWindowRect($taskbar, [ref]$taskbarRect)
+    $cursor = [GlassDockM0SafetyPoint]::new()
+    $cursorAvailable = [GlassDockM0SafetyNative]::GetCursorPos([ref]$cursor)
     $bounds = [ordered]@{
         PrimaryWidth = [GlassDockM0SafetyNative]::GetSystemMetrics(0)
         PrimaryHeight = [GlassDockM0SafetyNative]::GetSystemMetrics(1)
@@ -86,7 +98,9 @@ function Get-M0InteractiveDesktopSnapshot {
             Visible = $taskbar -ne [IntPtr]::Zero -and [GlassDockM0SafetyNative]::IsWindowVisible($taskbar)
             Bounds = if ($taskbarHasRect) { [ordered]@{ Left=$taskbarRect.Left; Top=$taskbarRect.Top; Right=$taskbarRect.Right; Bottom=$taskbarRect.Bottom } } else { $null }
         }
+        Cursor = [ordered]@{ Available=$cursorAvailable; X=$cursor.X; Y=$cursor.Y }
         ScreenBounds = $bounds
+        CoordinateSpace = if ($dpiContextSwitchSucceeded) { 'PhysicalPixels; thread DPI context is Per-Monitor-V2' } else { 'Caller DPI context unchanged; values may be virtualized' }
     }
 }
 
@@ -102,11 +116,33 @@ function Write-M0SafetyManifest {
 function ConvertTo-M0ProcessIdentity {
     param([Parameter(Mandatory)][Diagnostics.Process]$Process)
 
-    $Process.Refresh()
+    $processId = $Process.Id
+    $executablePath = ''
+    $startTimeUtcTicks = 0L
+    for ($attempt = 0; $attempt -lt 10 -and [string]::IsNullOrWhiteSpace($executablePath); $attempt++) {
+        try {
+            $liveProcess = Get-Process -Id $processId -ErrorAction Stop
+            $liveProcess.Refresh()
+            $executablePath = [string]$liveProcess.Path
+            if ([string]::IsNullOrWhiteSpace($executablePath)) {
+                $processInfo = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$processId" -ErrorAction Stop
+                if ($processInfo) { $executablePath = [string]$processInfo.ExecutablePath }
+            }
+            if (-not [string]::IsNullOrWhiteSpace($executablePath)) {
+                $startTimeUtcTicks = $liveProcess.StartTime.ToUniversalTime().Ticks
+                break
+            }
+        }
+        catch { $executablePath = '' }
+        if ([string]::IsNullOrWhiteSpace($executablePath)) { Start-Sleep -Milliseconds 100 }
+    }
+    if ([string]::IsNullOrWhiteSpace($executablePath) -or $startTimeUtcTicks -le 0) {
+        throw "Could not verify the executable path and start time for owned process PID=$processId."
+    }
     return [ordered]@{
-        ProcessId = $Process.Id
-        ExecutablePath = [IO.Path]::GetFullPath($Process.Path)
-        StartTimeUtcTicks = $Process.StartTime.ToUniversalTime().Ticks
+        ProcessId = $processId
+        ExecutablePath = [IO.Path]::GetFullPath($executablePath)
+        StartTimeUtcTicks = $startTimeUtcTicks
     }
 }
 
@@ -187,6 +223,7 @@ function Start-M0InteractiveTestSession {
         WatchdogIdentity = $null
         Completed = $false
         MouseButtonDown = $false
+        RightMouseButtonDown = $false
         Manifest = $null
     }
     $session.Manifest = [ordered]@{
@@ -196,7 +233,14 @@ function Start-M0InteractiveTestSession {
         EvidenceRoot = $session.EvidenceRoot
         DeadlineUnixMilliseconds = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds).ToUnixTimeMilliseconds()
         ForegroundWindowHandle = [long]$preState.Foreground.Hwnd
+        ForegroundProcessId = [int]$preState.Foreground.ProcessId
+        OriginalCursorX = [int]$preState.Cursor.X
+        OriginalCursorY = [int]$preState.Cursor.Y
+        InjectedCursorX = [int]$preState.Cursor.X
+        InjectedCursorY = [int]$preState.Cursor.Y
+        CursorMovePending = $false
         MouseButtonDown = $false
+        RightMouseButtonDown = $false
         Processes = @()
         FileRestores = @()
     }
@@ -212,9 +256,8 @@ function Start-M0InteractiveTestSession {
         '--timeout-seconds', [string]$TimeoutSeconds, '--run-id', $runId)
     $quotedArgs = $args | ForEach-Object { '"' + ([string]$_).Replace('"', '\"') + '"' }
     $session.WatchdogProcess = Start-Process -FilePath $WatchdogExe -ArgumentList ($quotedArgs -join ' ') -WorkingDirectory (Split-Path -Parent $WatchdogExe) -PassThru -WindowStyle Hidden
-    $session.WatchdogIdentity = ConvertTo-M0ProcessIdentity $session.WatchdogProcess
-
     try {
+        $session.WatchdogIdentity = ConvertTo-M0ProcessIdentity $session.WatchdogProcess
         for ($attempt = 0; $attempt -lt 100 -and -not (Test-Path -LiteralPath $session.ReadyPath); $attempt++) {
             $session.WatchdogProcess.Refresh()
             if ($session.WatchdogProcess.HasExited) { throw "Safety watchdog exited during startup (code $($session.WatchdogProcess.ExitCode))." }
@@ -227,6 +270,11 @@ function Start-M0InteractiveTestSession {
     }
     catch {
         if ($session.WatchdogIdentity) { [void](Stop-M0OwnedProcess $session.WatchdogIdentity $session.RepoRoot) }
+        elseif ($session.WatchdogProcess -and -not $session.WatchdogProcess.HasExited) {
+            $stopSignal = @{ RunId=$runId; Reason='runner-initialization-failed'; TimestampUtc=[DateTimeOffset]::UtcNow.ToString('O') }
+            [IO.File]::WriteAllText($session.StopPath, ($stopSignal | ConvertTo-Json -Compress), [Text.UTF8Encoding]::new($false))
+            [void]$session.WatchdogProcess.WaitForExit(5000)
+        }
         throw
     }
 }
@@ -235,7 +283,7 @@ function Start-M0OwnedTestProcess {
     param(
         [Parameter(Mandatory)]$Session,
         [Parameter(Mandatory)][string]$FilePath,
-        [string[]]$ArgumentList = @(),
+        [AllowEmptyCollection()][string[]]$ArgumentList = @(),
         [string]$WorkingDirectory
     )
 
@@ -244,7 +292,13 @@ function Start-M0OwnedTestProcess {
     if (-not $fullPath.StartsWith(($Session.RepoRoot.TrimEnd('\') + '\'), [StringComparison]::OrdinalIgnoreCase)) {
         throw "Refusing to launch a test executable outside this repository: $fullPath"
     }
-    $process = Start-Process -FilePath $fullPath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -PassThru
+    if ([string]::IsNullOrWhiteSpace($WorkingDirectory)) { $WorkingDirectory = Split-Path -Parent $fullPath }
+    if ($ArgumentList.Count -gt 0) {
+        $process = Start-Process -FilePath $fullPath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -PassThru
+    }
+    else {
+        $process = Start-Process -FilePath $fullPath -WorkingDirectory $WorkingDirectory -PassThru
+    }
     try {
         Register-M0OwnedInteractiveProcess -Session $Session -Process $process | Out-Null
         return $process
@@ -304,6 +358,21 @@ function Set-M0InteractiveMouseButtonState {
     Write-M0SafetyManifest $Session
 }
 
+function Set-M0InteractiveRightMouseButtonState {
+    param([Parameter(Mandatory)]$Session, [Parameter(Mandatory)][bool]$IsDown)
+    $Session.RightMouseButtonDown = $IsDown
+    $Session.Manifest.RightMouseButtonDown = $IsDown
+    Write-M0SafetyManifest $Session
+}
+
+function Set-M0InteractiveCursorTarget {
+    param([Parameter(Mandatory)]$Session, [Parameter(Mandatory)][int]$X, [Parameter(Mandatory)][int]$Y)
+    $Session.Manifest.InjectedCursorX = $X
+    $Session.Manifest.InjectedCursorY = $Y
+    $Session.Manifest.CursorMovePending = $true
+    Write-M0SafetyManifest $Session
+}
+
 function Assert-M0InteractiveTestCanContinue {
     param([Parameter(Mandatory)]$Session)
 
@@ -335,6 +404,18 @@ function Stop-M0InteractiveTestSession {
         Set-M0InteractiveMouseButtonState $Session $false
     }
 
+    if ($Session.RightMouseButtonDown) {
+        $input = [GlassDockM0SafetyInput]::new()
+        $input.Type = 0
+        $input.Data = [GlassDockM0SafetyInputUnion]::new()
+        $input.Data.Mouse = [GlassDockM0SafetyMouseInput]::new()
+        $input.Data.Mouse.Flags = 0x0010
+        $input.Data.Mouse.ExtraInfo = [UIntPtr]0x474C415353444F43
+        $sent = [GlassDockM0SafetyNative]::SendInput(1, @($input), [Runtime.InteropServices.Marshal]::SizeOf([type][GlassDockM0SafetyInput]))
+        Add-M0InteractiveRestorationCheck $Session 'Injected right button released' ($sent -eq 1) "SendInput release count=$sent"
+        Set-M0InteractiveRightMouseButtonState $Session $false
+    }
+
     $stopResults = @()
     foreach ($identity in @($Session.ProcessIdentities)) {
         $stopResults += Stop-M0OwnedProcess $identity $Session.RepoRoot
@@ -363,16 +444,55 @@ function Stop-M0InteractiveTestSession {
     }
 
     $originalHwnd = [IntPtr][long]$Session.PreviousDesktopState.Foreground.Hwnd
+    $originalProcessId = [uint32]$Session.PreviousDesktopState.Foreground.ProcessId
     $focusRestore = $true
+    $focusDetails = 'No foreground HWND was captured.'
     if ($originalHwnd -ne [IntPtr]::Zero) {
-        $focusRestore = [GlassDockM0SafetyNative]::IsWindow($originalHwnd)
-        if ($focusRestore) {
-            [void][GlassDockM0SafetyNative]::SetForegroundWindow($originalHwnd)
-            Start-Sleep -Milliseconds 100
+        $actualProcessId = [uint32]0
+        $validWindow = [GlassDockM0SafetyNative]::IsWindow($originalHwnd)
+        if ($validWindow) { [void][GlassDockM0SafetyNative]::GetWindowThreadProcessId($originalHwnd,[ref]$actualProcessId) }
+        $validWindow = $validWindow -and ($originalProcessId -eq 0 -or $actualProcessId -eq $originalProcessId)
+        $focusRestore = $validWindow
+        $focusDetails = "Original hwnd=0x{0:X}; expected pid={1}; actual pid={2}; valid={3}" -f $originalHwnd.ToInt64(),$originalProcessId,$actualProcessId,$validWindow
+        if ($validWindow) {
+            for ($attempt=1; $attempt -le 12; $attempt++) {
+                [void][GlassDockM0SafetyNative]::SetForegroundWindow($originalHwnd)
+                Start-Sleep -Milliseconds 150
+                if ([GlassDockM0SafetyNative]::GetForegroundWindow() -eq $originalHwnd) { break }
+            }
             $focusRestore = [GlassDockM0SafetyNative]::GetForegroundWindow() -eq $originalHwnd
+            $focusDetails += "; verified=$focusRestore; attempts=12"
         }
     }
-    Add-M0InteractiveRestorationCheck $Session 'Foreground window restored' $focusRestore ("Original hwnd=0x{0:X}" -f $originalHwnd.ToInt64())
+    Add-M0InteractiveRestorationCheck $Session 'Foreground window restored' $focusRestore $focusDetails
+
+    $cursorRestorePassed = $true
+    $cursorDetails = 'No synthetic pointer movement was registered.'
+    if ($Session.Manifest.CursorMovePending) {
+        $currentCursor = [GlassDockM0SafetyPoint]::new()
+        $cursorAvailable = [GlassDockM0SafetyNative]::GetCursorPos([ref]$currentCursor)
+        if (-not $cursorAvailable) {
+            $cursorRestorePassed = $false
+            $cursorDetails = 'GetCursorPos failed while verifying the pointer restoration.'
+        }
+        elseif ([Math]::Abs($currentCursor.X - [int]$Session.Manifest.InjectedCursorX) -le 2 -and
+            [Math]::Abs($currentCursor.Y - [int]$Session.Manifest.InjectedCursorY) -le 2) {
+            $cursorRestorePassed = [GlassDockM0SafetyNative]::SetCursorPos([int]$Session.Manifest.OriginalCursorX,[int]$Session.Manifest.OriginalCursorY)
+            $restoredCursor = [GlassDockM0SafetyPoint]::new()
+            if ($cursorRestorePassed) { $cursorRestorePassed = [GlassDockM0SafetyNative]::GetCursorPos([ref]$restoredCursor) -and
+                [Math]::Abs($restoredCursor.X - [int]$Session.Manifest.OriginalCursorX) -le 2 -and
+                [Math]::Abs($restoredCursor.Y - [int]$Session.Manifest.OriginalCursorY) -le 2 }
+            $cursorDetails = "Pointer was at last injected target=($($currentCursor.X),$($currentCursor.Y)); restored to snapshot=($($Session.Manifest.OriginalCursorX),$($Session.Manifest.OriginalCursorY)); verified=$cursorRestorePassed."
+            $Session.Manifest.CursorMovePending = $false
+            Write-M0SafetyManifest $Session
+        }
+        else {
+            $cursorDetails = "Pointer moved after the last synthetic target; preserved current user position=($($currentCursor.X),$($currentCursor.Y))."
+            $Session.Manifest.CursorMovePending = $false
+            Write-M0SafetyManifest $Session
+        }
+    }
+    Add-M0InteractiveRestorationCheck $Session 'Synthetic pointer position restored or user movement preserved' $cursorRestorePassed $cursorDetails
 
     $after = Get-M0InteractiveDesktopSnapshot
     $taskbarSame = $after.Taskbar.Visible -eq $Session.PreviousDesktopState.Taskbar.Visible -and

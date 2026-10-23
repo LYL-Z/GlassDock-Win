@@ -1,59 +1,68 @@
 # M0 技术路线对比与复评
 
-日期：2026-10-22。当前记录支持继续验证，不构成最终框架决定。
+更新日期：2026-10-22。以下结果用于决定下一步验证，不代表最终生产框架已经选定。
 
 ## 当前判断
 
-| 维度 | WPF + Win32 互操作 | WinUI 3 + Windows App SDK | Win32 + DirectComposition/Direct2D |
+| 维度 | WPF + Win32 互操作 | WinUI 3 + Windows App SDK | Win32 + DirectComposition / Direct2D |
 |---|---|---|---|
-| 逐像素透明 / 点击穿透 | Windows 11、系统报告 250% DPI、单屏条件下，WPF 三边透明角的合成单击、双击、拖动起始由独立下层 Win32 窗口收到；Dock 内容事件由 WPF 收到。不是物理鼠标验收 | 三边透明角的合成单击、双击由 WinUI 根 Grid 收到，下层窗口计数为零；实测 FAIL。内容区和拖动尚未测试 | 未实现；不能推断它会自动提供逐像素透明输入 |
-| 根因与公开修复空间 | PoC 使用 `AllowsTransparency=True` 的 WPF layered window，另有 `WM_NCHITTEST`/`HTTRANSPARENT` 圆角逻辑。实测成功，但还不能把成功唯一归因于其中一项，也未覆盖物理输入和其他 DPI | HWND 仍是窗口级命中对象，XAML 中 `Background="Transparent"` 的 `LayoutRoot` 覆盖整窗，并订阅根 `PointerPressed`；日志证实根元素接收了透明角事件。证据支持“窗口矩形命中 + 可命中的根视觉树”共同导致拦截；并非按钮把已处理事件吞掉。WinUI 没有已验证的逐像素 alpha 输入洞 API | 可自行定义 HWND 区域、命中与合成路径；必须用下层窗口真实消息验证，不会因改用原生代码而自动通过 |
-| 受支持的 WinUI 候选 | layered-window 每像素 alpha 是 Win32 公开能力；WPF 的具体呈现/命中组合仍要在矩阵中复测 | `SetWindowRgn` 是公开 User32 API，可将 HWND 限成圆角区域，可能解决胶囊外的透明角；它剪裁绘制区域，可能影响抗锯齿边缘、阴影和玻璃边缘，尚未在本 PoC 实测。`WS_EX_TRANSPARENT` 对整个顶层 layered window 会一并放过 Dock 内容，不能单独作为解法。`HTTRANSPARENT` 文档限定转交到同线程的底层窗口，不能据此承诺跨进程/线程下层窗口可靠收到事件 | 更灵活但需自行承担窗口区、输入路由、DPI、合成视觉树和设备生命周期维护 |
-| DWM / DirectComposition | WGC 已取得一个 DWM 合成帧；没有比较独立 Composition 视觉树 | Windows App SDK/Composition 可供视觉效果开发，但不会自动解决 HWND 的输入命中问题；没有 WinUI 捕获对照 | 能直接建立 Composition 视觉树；尚未测试性能、恢复、模糊与输入 |
-| 玻璃、模糊与阴影 | 唯一对照帧（WPF / 浅色 / Bottom / 58 DIP）证实背景透射与阴影；方格保持清晰，没有观察到背景模糊 | 没有 WinUI 对照帧或模糊结果 | 能自行组合材质和模糊，但尚无 PoC 证据；不可将“可编程”写成“已达到液态玻璃” |
-| 动画性能与呈现帧时间 | 没有逐进程 Present/ETW 帧样本。DWM 被动探针取得全局 240Hz 采样，不代表 WPF 帧率 | 同样无进程帧样本；DWM 全局探针不归属到 WinUI | 未测。低层 API 不是性能证据 |
-| DPI、多显示器、动态刷新 | 只在系统报告 250% DPI / 单屏验证了有限输入场景；100/150/200%、跨屏和真实刷新节奏未测 | 相同环境缺口 | 可定义策略，但实现和实测不存在 |
-| 任务栏、最大化、无边框/独占全屏、恢复 | 仅有旧的置顶/窗口探测；共存及状态恢复未测 | 相同；共存及恢复未测 | 未测；可控不等于已兼容 |
-| Windows API 可维护性 | WPF layered-window 路径成熟且当前 PoC 小；仍需验证窗口消息/DPI/多屏，并检查 WPF 渲染、interop 与子 HWND 限制 | WinUI 的 AppWindow/HWND 互操作公开；当前问题在根树和窗口输入边界。以可选公开 region 实验验证，若损坏视觉或不能跨线程穿透，不采用私有 hack | 需自行负责窗口消息、region、绘制、DPI、设备丢失、无障碍与资源生命周期，初始成本最高 |
-| 后续架构扩展成本 | 适合继续作为输入路径基线；视觉与性能是否满足目标仍未知 | 仅在公开 API 候选经真实事件和视觉验证后继续投入 | 只在 WPF/WinUI 有证据支持的实质限制时进入受控 PoC |
+| 逐像素透明与点击路由 | 默认 PoC 在受控 SendInput 场景中 18/18 通过，Bottom/Left/Right；独占全屏中 HWND 命中与 WGC 可见性不一致 | 默认根 Grid 的透明区域 9/9 失败；可选 `SetWindowRgn` 候选内容与透明路由 18/18 通过 | 未实现；改用原生窗口不自动得到正确透明输入 |
+| 修复验证状态 | `AllowsTransparency=True` layered window 与窗口命中 hook 尚未拆分机制；物理鼠标、非 250% DPI 和独占输入未验收 | 公开 `SetWindowRgn` 当前模式/DPI 的输入候选通过；视觉仍见外缘宿主/阴影轮廓，候选默认关闭 | 可自定义区域、命中、渲染与合成；需独立证明输入和可见结果 |
+| DWM / Composition | WGC 36 帧矩阵成功，尚无背景模糊证据；WPF layered-window 能力需继续评估 | Windows App SDK / Composition 可以作为视觉构建基础，但不会自动解决 HWND 命中；WGC 36 帧矩阵也无目标级模糊 | 可直接建立 Composition 视觉树；性能/设备恢复/材质/输入均未测 |
+| 玻璃、透射与阴影 | 代表性浅/深 WGC 样本可见背景透射和阴影，格线未模糊 | 灰色半透明 pill 可见，基线有浅色宿主边框；region 变体保留 pill，但外缘残留矩形轮廓 | 有组合材质的自由度；当前没有 PoC 证据 |
+| 动画性能与帧时间 | 无 Dock 自身 update/Present 时间序列；DWM 全局约 240Hz 不代表 WPF 帧率 | 同样无进程级时间序列；DXGI 测试的模式变化不是帧率证据 | 未测；API 层级低不等于性能已达标 |
+| DPI、多屏、动态刷新 | 仅当前系统报告 250% 单屏；120/240Hz 模式下窗口存活；未测 100/150/200%、跨屏、动态 DPI | 相同覆盖范围；region 候选只在当前 250% DPI 运行 | 可定义策略但实现和硬件验证不存在 |
+| 任务栏、窗口、全屏共存 | 最大化/无边框 2/2 场景通过；DXGI 独占时 Dock 未出现在 WGC 帧而命中 API 仍指向 Dock，需解决 | 最大化/无边框通过；受控独占测试里启动 Dock 后 DXGI 状态变为非独占；不是游戏矩阵 | 未测；必须验证窗口 z-order、任务栏、exclusive/DWM 路径 |
+| 托盘/恢复 | WPF 托盘 Show/Exit 实测通过；两候选隔离配置缺失/损坏/非法输入 6/6 恢复 | 菜单弹出已确认，但 UIA/MSAA/GetMenu 无法暴露菜单项，Show/Exit 阻塞 | 未实现 |
+| Windows API 可维护性 | layered-window 是成熟公开机制，但 WPF 渲染、DPI、子 HWND 与窗口消息 hook 仍有风险 | HWND region 是公开机制，单候选证明可路由；抗锯齿、阴影、动态 region 更新和 DPI 迁移需验证；不引入私有 WinUI hack | 需要自己维护窗口输入、region、DPI、设备丢失、无障碍和资源生命周期，成本最高 |
+| 后续扩展成本 | 当前输入领先，但全屏、玻璃与 frame-time 证据不足 | 默认输入失败有公开候选，不等于生产决策；视觉和托盘仍有问题 | 仅在现有路线出现有证据的底层限制时投入 PoC |
 
-## WinUI 3 输入问题分析
+## WinUI 3 输入路径
 
-静态代码检查发现：`MainWindow.xaml` 的透明 `LayoutRoot` 覆盖整个窗口；`MainWindow.xaml.cs` 为该根 Grid 注册 `PointerPressed`、`PointerReleased` 和拖动 `PointerMoved`。处理器只记录输入，没有将事件标记为 handled。既有运行日志表明透明角事件到达了这个根元素，所以问题不是图标按钮误吞事件。由于 WinUI 主窗口由 HWND 承载，系统先把矩形窗口当作命中目标；XAML 根树又把透明 Brush 所在区域作为可命中的元素。实际测试能证明失败路径，但仅凭这些代码还不能把根因拆分为单一层。
+默认运行中，覆盖全窗口的 `LayoutRoot` 使用透明背景并订阅 Pointer 事件；透明区域运行日志表明根 Grid 收到事件，事件处理器没有设置 `Handled`。实测因此证明 WinUI 根命中路径截获透明区域输入，但现有证据不能把窗口级 HWND 矩形和 XAML 根视觉树的贡献完全拆开。默认实现的透明单击、双击和透明区起始拖动在三边均失败；Dock 内容单击、双击和从内容区拖出正常。
 
-Microsoft 的 layered-window 文档说明，逐像素 alpha 为零的区域可将鼠标消息传给下方窗口；同一文档也说明 `WS_EX_TRANSPARENT` 会忽略整个 layered-window 的形状并让鼠标事件全部下传。对 Dock 来说，整窗透明穿透会牺牲图标和 Dock 内容交互。[Layered windows / hit testing](https://learn.microsoft.com/en-us/windows/win32/winmsg/window-features)。
+本轮对 WinUI 增加了默认关闭的 `SetWindowRgn` 候选：按 8 DIP 内缩、28 DIP 圆角构造窗口 region。在 250% DPI 的 Bottom/Left/Right 位置，独立下层窗口收到透明区单击、双击和拖动消息，Dock 内容单击、双击和拖动也继续工作，18/18 PASS。调用记录确认 SetWindowRgn 成功。该结果表明公开 API 可以解决本 PoC 的当前输入边界；它还没有在其他 DPI、多屏和动态尺寸变化中验证，且视觉候选仍有外缘矩形宿主/阴影轮廓。
 
-`SetWindowRgn` 是公开、长期存在的 Win32 API，定义系统可绘制的窗口区域。[SetWindowRgn](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowrgn)。圆角 region 可作为一个有限的公开 API 候选，把胶囊外的四角从 HWND 区域排除；它不是逐像素 alpha 洞，也可能剪掉阴影或抗锯齿/模糊边缘。尚未改动 WinUI PoC 来默认使用该 API，也尚未对 HWND region 的下层真实事件交付做用户批准后的实测。因此当前结论是“有一个值得做的、公开 API 的窄候选”，而不是“已有可靠修复”。
+候选代码由 `GLASSDOCK_M0_TEST_ROUNDED_REGION=1` 显式启用，只是 M0 试验，不改变默认 WinUI PoC。视觉对照仅在 Bottom/58 DIP/250% DPI 取得浅/深 2 帧；图中 Dock 内容保留，但外缘轮廓仍需处理，且没有目标背景模糊。当前输入探索到此停止，不继续叠加其他系统级技巧。后续只有在实现发生变化且有明确问题时，才重新运行候选对照。
 
-`WM_NCHITTEST` 的 `HTTRANSPARENT` 说明是把消息继续交给同线程底层窗口；当前下层测试窗口和 Dock 是不同进程，因此该机制不能独立保证跨线程/跨进程转发。[WM_NCHITTEST](https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-nchittest)。WPF 的实际通过可能来自 layered-window 的 alpha 命中行为和/或 PoC 的 hit-test hook；现有日志没隔离这两种机制。后续验证要维持 Dock 内容点击正常、透明区域单/双击和按住移动到达独立下层窗口，并同时检查剪裁、阴影和玻璃外观。
+Microsoft 文档说明，layered window 每像素 alpha 为零的区域可将鼠标消息交给下方窗口；`WS_EX_TRANSPARENT` 可让整个 layered-window 形状的鼠标事件下传，会牺牲 Dock 内容点击。[Layered windows / hit testing](https://learn.microsoft.com/en-us/windows/win32/winmsg/window-features)。`SetWindowRgn` 是公开 User32 API，可限制窗口绘制区域；region 方案可能剪裁阴影、抗锯齿或玻璃边缘。[SetWindowRgn](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowrgn)。`HTTRANSPARENT` 文档语义依赖同线程的底层窗口，不能据此承诺跨进程/线程事件传递。[WM_NCHITTEST](https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-nchittest)。
 
-## 被动 DWM 计时探针
+WPF 使用 `AllowsTransparency=True` 和 `WM_NCHITTEST`/`HTTRANSPARENT` 圆角逻辑。现有 WPF 合成输入成功，但尚未拆分 layered alpha 和 hit-test hook 的作用。其独占全屏观察也留下未决项：DXGI 仍报告独占、Dock HWND 可见/置顶且中心 WindowFromPoint 指向 Dock，WGC 保存帧却没有 Dock；该场景未发送输入，因此不能断言 Dock 实际拦截了游戏输入，也不能判为全屏共存通过。
 
-脚本：`scripts/measure-dwm-composition.ps1`。本机以未开启管理员角色的当前令牌运行了约 2 秒采样；8/8 次 `DwmGetCompositionTimingInfo(hwnd=NULL)` 返回 `S_OK`，结构大小 292 字节，HRESULT 错误字段为 0；刷新和全局 compose-rate 约为 239.998–240.004 Hz，单次 API 调用约 96–142 微秒。第一轮 Pack 布局错误，16 次得到 HRESULT `0x88980090`；改为 Pack=4 后重复采样通过。证据在 `D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\dwm\dwm-composition-20261022T121946Z.jsonl`。
+## WGC 视觉与 DWM 计时
 
-该 API 在 Windows 8.1 及之后要求 HWND 参数为 NULL；结果是桌面合成时序，不能归属于 Dock 进程，也不是最终面板 scanout。[DwmGetCompositionTimingInfo](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/nf-dwmapi-dwmgetcompositiontiminginfo) · [DWM_TIMING_INFO](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ns-dwmapi-dwm_timing_info)。本次没有创建可见窗口、改变显示设置或注入输入，也没有请求提权。应用逻辑更新间隔仍未采集；逐进程 Present/ETW 仍因 `StartTrace` access denied 而 BLOCKED；WGC `SystemRelativeTime` 需要连续采集帧才可作合成帧间隔代理，也尚未采集序列。任何一个都不能单独被称为面板真实呈现帧时间。
+基线视觉矩阵在 Windows.Graphics.Capture / Direct3D11CaptureFramePool 中取得 36/36 帧，覆盖 WPF/WinUI、浅/深受控背景、三边、44/58/72 DIP。WGC 是 DWM 合成画面捕获，不是物理 scanout。代表样本显示 WPF 可见背景透射与阴影，但格线仍清楚；WinUI 是灰色半透明面板，基线浅色外框明显；region 变体的 pill 与图标保留，但外缘轮廓仍见。没有样本显示目标级模糊/液态玻璃。浅/深是受控背景，不是切换系统主题；所有视觉样本只有当前 250% DPI。
 
-## 证据状态与停止条件
+被动探针 `scripts/measure-dwm-composition.ps1` 直接调用 `DwmGetCompositionTimingInfo(hwnd=NULL)`，本次约 4.27 秒收到 16/16 次 `S_OK`，Refresh/Compose 全局约 240.004 Hz。日志在 `D:\MacOS\GlassDock-Win\.local\evidence\final-validation\resume-20261023T032925Z\dwm-composition.jsonl`。该 API 的 Windows 8.1+ 用法要求传 NULL HWND，报告全局桌面合成时序，不归属 Dock 进程，也不是面板 scanout。[DwmGetCompositionTimingInfo](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/nf-dwmapi-dwmgetcompositiontiminginfo) · [DWM_TIMING_INFO](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ns-dwmapi-dwm_timing_info)。
 
-- **输入路径**：已有 WPF PASS（限定于记录的合成输入和当前单屏/250% 条件），WinUI 透明角 FAIL。获得针对该项的桌面交互许可后，最多先做一轮 WPF 基线复核和 WinUI 圆角 HWND region 候选对照；若候选无法让独立下层窗口收到输入，或必须使用私有/不受支持技巧，停止 WinUI 输入修复探索并保留 FAIL，不继续堆叠系统级 hack。
-- **视觉路径**：经单独授权后，使用 Windows.Graphics.Capture 对两主题、中心/圆角、3 边、44/58/72 DIP 和高对比背景采集合成图。透明透射、背景模糊、边缘和阴影分开记录。若 WPF/WinUI 的公开 DWM/Composition 能力在两次有依据的实现尝试后仍没有背景模糊或造成不可接受的剪裁/边缘，停止将其当作完成目标的路线；再评估受控 DComp PoC。
-- **性能路径**：先做不覆盖桌面的应用逻辑更新间隔日志；逐进程 Present 时序通过受支持的无管理员方案获得后，分别在设备支持的 120/240Hz 测 60 秒动画样本并重复 3 次。把逻辑更新、进程 Present、DWM 全局 compose-rate 和面板 scanout 分列。原任务书没有数值化 P95/丢帧门槛，故不把本段提议的采样次数写成验收阈值；应在测量证据到位后再由验收矩阵给出结果，不反向降低标准。
-- **停止研究条件**：WinUI 经一个公开 API region 候选仍失败即停止 WinUI 修补；WPF 若可见玻璃效果在两次公开 API 实现尝试后无法支持目标模糊，或后续真实输入/窗口共存出现不可接受故障，才启动范围严格的 Win32 + DirectComposition 最小 PoC。不得因 “低层更快” 预先选择 DComp。
+当前没有应用逻辑更新间隔日志，没有 PresentMon/ETW 成功采集，也没有 WGC 连续帧时间序列或面板 scanout 测量。StartTrace `access denied` 后没有提权或更改用户组。因此不能声称达到 120Hz/240Hz 流畅度。
+
+## 证据和停止条件
+
+- **输入**：WPF 默认当前矩阵 PASS；WinUI 默认 FAIL，唯一公开 `SetWindowRgn` 候选当前矩阵通过。WinUI 输入技巧探索停止在该公开候选，不再尝试私有 hack。候选仍需 DPI/多屏/视觉适配。
+- **视觉**：当前两候选都没有背景模糊证据，region 也没有解决 WinUI 外缘轮廓。下一次视觉工作应针对公开 DWM/Composition 材质实现提出具体方案、预期截图特征和停止点；同一路线经两次有依据的实现尝试仍无模糊或造成不可接受边缘时，停止把该栈视作能完成目标材质的唯一方案，再讨论 DComp PoC。
+- **性能**：先采不覆盖桌面的应用逻辑更新时间；寻找受支持、无需提权的进程 Present 方案；若只能拿到应用内部代理指标，不能称为最终呈现时间。若确需管理员采集，需给出精确命令、权限和风险并等待用户授权。
+- **共存**：最大化/无边框的受控窗口 4/4 PASS；独占全屏仍 BLOCKED。需要以已运行的真实全屏程序验证 Dock 在游戏开始前已运行和运行中状态的交互，且判断可见性、点击及是否造成焦点/独占模式转换。
 
 ## 架构级阻断与设备覆盖
 
-架构级阻断项是当前可在本机通过获批测试/代码验证解决的：WinUI 透明区下层事件路由；玻璃模糊与边缘质量；窗口/任务栏/全屏共存恢复；Dock 自身帧时序测量方法。它们不能因为硬件缺项而自动延期或标为通过。
+当前可在已有设备上推进的架构问题：液态玻璃级背景模糊、WinUI 候选外缘质量、WPF/WinUI 全屏行为歧义、WinUI 托盘菜单可访问性，以及 Dock 进程自身呈现指标。不能把它们因为硬件缺项标成通过。
 
-设备依赖项包括当前机器没有的 100/150/200% 实际缩放、多显示器跨屏、原生支持的 120Hz/240Hz 模式，以及当前显示组合不支持的 60Hz。虚拟机可补充逻辑尺寸和 OS API 行为，但其虚拟 GPU/显示栈不代表本机物理刷新；外接屏可补足实际屏幕模式。当前只有一个活动显示器记录，60Hz 同分辨率模式此前测试不支持；100/150/200% DPI 与第二屏组合不得写成通过。设备无法提供的覆盖须在最后 M0 核验时明确列作环境限制，并由验收方决定延期，不得无限期等待，也不得自行放宽。
+设备依赖包括 100/150/200% 实际缩放、多显示器跨屏、当前分辨率不支持的 60Hz。外接屏/备用测试机可以补实际模式；虚拟机适合 OS/API 行为，但不替代物理屏刷新证据。不能获得的硬件组合需明确请求验收延期，不降低阈值也不无限等待。
 
 ## 许可证与公开仓库
 
-GitHub 仓库当前公开。GitHub 官方说明，公开仓库用户可在服务中查看和 fork；无项目许可证时仍受默认版权规则限制，不能据此获得广泛的复制、修改、衍生或再分发授权。[GitHub：Licensing a repository](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/licensing-a-repository)。根 `LICENSE` 未修改，但其当前“Do not redistribute, publish”绝对措辞与 GitHub 对 fork 的服务许可不一致；建议权利人决定许可证时把占位文案改成类似“未授予项目级许可；GitHub 服务条款允许的查看和 fork 除外”，或直接替换为所选正式许可证。该文案方案仅供决定，等待用户选择，当前没有写入 `LICENSE`。
+GitHub 仓库公开。站内查看/fork 权限与项目级许可证不是一回事；没有许可证时不能推导出广泛站外复制、修改、商业使用或再分发授权。[GitHub: Licensing a repository](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/licensing-a-repository)。根 `LICENSE` 保持不变；现有“Do not redistribute, publish”占位语句可在用户决定后改成清楚区分 GitHub 站内查看/fork 与项目级授权的措辞。
 
-MIT 允许宽泛使用、修改、商业使用和再分发，但要求保留版权/许可声明；Apache-2.0 也宽松并增加明确专利授权、专利诉讼终止与 NOTICE/声明义务；GPL-3.0 允许使用、修改和分发，但分发覆盖作品及衍生作品时要求遵循相应 copyleft 和源码提供义务；暂不公开授权则保留权利，GitHub 的查看/fork 服务权利仍存在但没有更广泛项目授权。最终许可证由用户决定，本轮不改 `LICENSE`。
+| 许可选项 | 复用/商业化/再分发影响 |
+|---|---|
+| MIT | 宽松许可，可使用、修改、商业使用和再分发；保留版权与许可证声明 |
+| Apache-2.0 | 宽松许可，明确专利授权与专利诉讼终止，附带 NOTICE/声明义务 |
+| GPL-3.0 | 允许使用和修改；分发覆盖作品及衍生作品时需履行 copyleft 和对应源码义务 |
+| 暂不授权 | 保留著作权、不授予广泛复用权；GitHub 站内服务许可仍适用 |
 
 ## 当前决策
 
-WPF 目前只有输入行为的临时领先证据；WinUI 有可验证的公开 region 候选但没有实测修复；DWM API 被动采样可用但不测 Dock；任何路线都没有完整玻璃视觉和有效的进程呈现帧证据。因此**不冻结 WPF、不放弃 WinUI、不批准 M1**。只有输入、视觉、性能/稳定性和系统共存证据达到要求，才冻结路线。原生 Win32 + DirectComposition 仍是有门槛的备选 PoC。
+WPF 默认输入有正面证据但全屏可见/命中存在歧义；WinUI 默认透明输入失败，其公开 region 候选修复当前测试矩阵，但视觉边缘和系统适配未过；两边均无目标模糊和有效 Dock 进程呈现时间。**不冻结 WPF、不放弃 WinUI、不进入 M1。** 当两路线出现有证据的实质底层限制后，再评估严格范围的 Win32 + DirectComposition PoC。
 
-参考：[DWM timing API](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/nf-dwmapi-dwmgetcompositiontiminginfo) · [Layered-window hit testing](https://learn.microsoft.com/en-us/windows/win32/winmsg/window-features) · [SetWindowRgn](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowrgn) · [HTTRANSPARENT](https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-nchittest) · [GitHub licensing](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-the-repository/licensing-a-repository).
+参考：[DWM timing API](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/nf-dwmapi-dwmgetcompositiontiminginfo) · [Layered-window hit testing](https://learn.microsoft.com/en-us/windows/win32/winmsg/window-features) · [SetWindowRgn](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowrgn) · [HTTRANSPARENT](https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-nchittest) · [GitHub licensing](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/licensing-a-repository).

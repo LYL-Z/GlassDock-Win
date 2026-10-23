@@ -36,7 +36,8 @@ public static class GlassDockProbeNativeMethods
         IntPtr found = IntPtr.Zero;
         EnumWindows((hwnd, _) =>
         {
-            GetWindowThreadProcessId(hwnd, out uint processId);
+            uint processId;
+            GetWindowThreadProcessId(hwnd, out processId);
             if (processId == targetProcessId && IsWindowVisible(hwnd))
             {
                 found = hwnd;
@@ -50,13 +51,15 @@ public static class GlassDockProbeNativeMethods
     public static bool IsPointOwnedByProcess(int x, int y, int targetProcessId)
     {
         IntPtr hwnd = WindowFromPoint(new GlassDockProbePoint { X = x, Y = y });
-        GetWindowThreadProcessId(hwnd, out uint processId);
+        uint processId;
+        GetWindowThreadProcessId(hwnd, out processId);
         return processId == targetProcessId;
     }
     public static string DescribePoint(int x, int y)
     {
         IntPtr hwnd = WindowFromPoint(new GlassDockProbePoint { X = x, Y = y });
-        GetWindowThreadProcessId(hwnd, out uint processId);
+        uint processId;
+        GetWindowThreadProcessId(hwnd, out processId);
         var className = new System.Text.StringBuilder(256);
         var title = new System.Text.StringBuilder(256);
         GetClassName(hwnd, className, className.Capacity);
@@ -75,7 +78,7 @@ $csvPath = Join-Path $evidenceDirectory "window-tests-$timestamp.csv"
 $results = [System.Collections.Generic.List[object]]::new()
 $watchdogExe = Join-Path $script:RepoRoot 'spikes\GlassDock.M0.InputProbe\bin\Release\net10.0-windows10.0.19041.0\win-x64\GlassDock.M0.InputProbe.exe'
 if (-not (Test-Path -LiteralPath $watchdogExe)) { throw "Build the safety watchdog first: $watchdogExe" }
-Confirm-M0InteractiveTest $ConfirmInteractiveTest -Purpose 'launch visible topmost WPF/WinUI windows and inspect window hit-test/position state'
+Confirm-M0InteractiveTest -Confirmed:$ConfirmInteractiveTest -Purpose 'launch visible topmost WPF/WinUI windows and inspect window hit-test/position state'
 if (-not $PSCmdlet.ShouldProcess('Current desktop', 'Launch visible topmost Dock PoCs for window-state checks')) { return }
 $session = Start-M0InteractiveTestSession -RepoRoot $script:RepoRoot -LocalRoot $script:LocalRoot `
     -Purpose 'visible Dock window position, topmost and HWND hit-test inspection; no input injection' `

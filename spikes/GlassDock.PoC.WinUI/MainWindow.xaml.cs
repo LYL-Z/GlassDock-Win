@@ -21,6 +21,8 @@ public sealed partial class MainWindow : Window, IDockWindowHost
     private const uint SwpNoActivate = 0x0010;
     private const uint SwpFrameChanged = 0x0020;
     private const ulong M0SendInputMarker = 0x53444F43;
+    private const double M0WindowRegionInsetDip = 8;
+    private const double M0WindowRegionCornerRadiusDip = 28;
     private static readonly nint HwndTopmost = new(-1);
     private readonly string _settingsPath = Path.Combine(GetStateRoot(), "winui-poc-settings.json");
     private readonly string _m0InputTracePath = Path.Combine(GetStateRoot(), "m0-input-events.jsonl");
@@ -177,6 +179,7 @@ public sealed partial class MainWindow : Window, IDockWindowHost
         var workArea = new PixelRect(area.X, area.Y, area.Width, area.Height);
         var bounds = DockLayout.Place(workArea, new PixelSize(size.Width, size.Height), edge, 12);
         MoveTo(bounds);
+        ApplyM0WindowRegionCandidate();
         EnsureTopmostWithoutActivation();
         SaveEdge(edge);
         var dpi = GetDpiForWindow(_hwnd);
@@ -343,6 +346,44 @@ public sealed partial class MainWindow : Window, IDockWindowHost
             $"success={result}; exStyle=0x{extendedStyle:X}; lastError={(result ? 0 : Marshal.GetLastWin32Error())}.");
     }
 
+    private void ApplyM0WindowRegionCandidate()
+    {
+        if (!string.Equals(Environment.GetEnvironmentVariable("GLASSDOCK_M0_TEST_ROUNDED_REGION"), "1", StringComparison.Ordinal))
+            return;
+
+        var dpi = GetDpiForWindow(_hwnd);
+        var scale = dpi / 96.0;
+        var inset = (int)Math.Round(M0WindowRegionInsetDip * scale);
+        var cornerDiameter = (int)Math.Round(M0WindowRegionCornerRadiusDip * 2 * scale);
+        if (!GetWindowRect(_hwnd, out var rect))
+        {
+            var boundsError = Marshal.GetLastWin32Error();
+            DockLogger.Error($"M0 SetWindowRgn candidate could not read HWND bounds; win32={boundsError}.",
+                new InvalidOperationException($"GetWindowRect failed with Win32 error {boundsError}."));
+            return;
+        }
+
+        var width = rect.Right - rect.Left;
+        var height = rect.Bottom - rect.Top;
+        var region = CreateRoundRectRgn(inset, inset, width - inset, height - inset, cornerDiameter, cornerDiameter);
+        if (region == nint.Zero)
+        {
+            var regionError = Marshal.GetLastWin32Error();
+            DockLogger.Error($"M0 SetWindowRgn candidate could not create a region; win32={regionError}.",
+                new InvalidOperationException($"CreateRoundRectRgn failed with Win32 error {regionError}."));
+            return;
+        }
+
+        var applied = SetWindowRgn(_hwnd, region, true);
+        var error = applied == 0 ? Marshal.GetLastWin32Error() : 0;
+        if (applied == 0)
+            _ = DeleteObject(region);
+
+        DockLogger.Info($"M0 SetWindowRgn candidate: applied={applied != 0}; hwndRect={width}x{height}; " +
+            $"dpi={dpi}; inset={inset}px; cornerDiameter={cornerDiameter}px; win32={error}. " +
+            "This opt-in test region clips the 8-DIP outer margin and rounded corners; default PoC behavior is unchanged.");
+    }
+
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool SetWindowPos(nint hWnd, nint hWndInsertAfter, int x, int y,
         int cx, int cy, uint flags);
@@ -355,6 +396,17 @@ public sealed partial class MainWindow : Window, IDockWindowHost
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool GetWindowRect(nint hWnd, out NativeRect rect);
+
+    [DllImport("gdi32.dll", SetLastError = true)]
+    private static extern nint CreateRoundRectRgn(int left, int top, int right, int bottom,
+        int ellipseWidth, int ellipseHeight);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern int SetWindowRgn(nint hWnd, nint hRgn, bool redraw);
+
+    [DllImport("gdi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DeleteObject(nint hObject);
 
     [DllImport("user32.dll")]
     private static extern nint GetMessageExtraInfo();

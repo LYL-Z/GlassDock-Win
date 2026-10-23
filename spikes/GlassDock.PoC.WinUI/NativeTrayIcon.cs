@@ -11,6 +11,7 @@ internal sealed class NativeTrayIcon : IDisposable
     private const uint NifIcon = 0x00000002;
     private const uint NifTip = 0x00000004;
     private const uint WmAppTray = 0x8000 + 41;
+    private const uint WmAppM0TestHide = 0x8000 + 42;
     private const uint WmContextMenu = 0x007B;
     private const uint WmRButtonUp = 0x0205;
     private const uint WmLButtonDblClk = 0x0203;
@@ -85,6 +86,13 @@ internal sealed class NativeTrayIcon : IDisposable
     private nint WindowProcedure(nint windowHandle, uint message, nuint wParam, nint lParam,
         nuint subclassId, nuint referenceData)
     {
+        if (message == WmAppM0TestHide &&
+            string.Equals(Environment.GetEnvironmentVariable("GLASSDOCK_M0_TEST_ALLOW_HIDE"), "1", StringComparison.Ordinal))
+        {
+            _ = ShowWindow(_windowHandle, 0);
+            return 0;
+        }
+
         if (message == WmAppTray)
         {
             var eventMessage = unchecked((uint)lParam.ToInt64());
@@ -197,6 +205,9 @@ internal sealed class NativeTrayIcon : IDisposable
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool PostMessage(nint windowHandle, uint message, nint wParam, nint lParam);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool ShowWindow(nint windowHandle, int command);
 
     [DllImport("user32.dll")]
     private static extern bool DestroyMenu(nint menu);

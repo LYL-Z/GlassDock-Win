@@ -18,7 +18,7 @@ internal static class Program
             var options = ParseArguments(args);
             if (options is null)
             {
-                Console.Error.WriteLine("Usage: GlassDock.M0.InputProbe.exe --theme Light|Dark --output-root <D-drive-path>");
+                Console.Error.WriteLine("Usage: GlassDock.M0.InputProbe.exe --theme Light|Dark --output-root <D-drive-path> [--window-mode Overlay|Maximized|Borderless]");
                 return 2;
             }
 
@@ -33,7 +33,7 @@ internal static class Program
             }
 
             ApplicationConfiguration.Initialize();
-            using var form = new InputProbeForm(options.Theme, outputRoot);
+            using var form = new InputProbeForm(options.Theme, outputRoot, options.WindowMode);
             Application.Run(form);
             return 0;
         }
@@ -50,25 +50,29 @@ internal static class Program
     {
         string? theme = null;
         string? outputRoot = null;
+        var windowMode = "Overlay";
         for (var index = 0; index < args.Length; index++)
         {
             if (args[index] == "--theme" && index + 1 < args.Length)
                 theme = args[++index];
             else if (args[index] == "--output-root" && index + 1 < args.Length)
                 outputRoot = args[++index];
+            else if (args[index] == "--window-mode" && index + 1 < args.Length)
+                windowMode = args[++index];
         }
 
-        if (theme is not ("Light" or "Dark") || string.IsNullOrWhiteSpace(outputRoot))
+        if (theme is not ("Light" or "Dark") || string.IsNullOrWhiteSpace(outputRoot) ||
+            windowMode is not ("Overlay" or "Maximized" or "Borderless"))
             return null;
         var fullOutputRoot = Path.GetFullPath(outputRoot);
         if (!fullOutputRoot.StartsWith(Path.GetPathRoot(fullOutputRoot)!, StringComparison.OrdinalIgnoreCase) ||
             !fullOutputRoot.StartsWith("D:\\", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("The input probe is restricted to output paths on D:. ");
 
-        return new ProbeOptions(theme, fullOutputRoot);
+        return new ProbeOptions(theme, fullOutputRoot, windowMode);
     }
 
-    private sealed record ProbeOptions(string Theme, string OutputRoot);
+    private sealed record ProbeOptions(string Theme, string OutputRoot, string WindowMode);
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern nint GetThreadDpiAwarenessContext();
@@ -88,23 +92,46 @@ internal sealed class InputProbeForm : Form
 
     private readonly string _theme;
     private readonly string _outputRoot;
+    private readonly string _windowMode;
     private readonly string _eventLogPath;
     private readonly string _scenarioMarkerPath;
     private long _inputCount;
     private string _lastEvent = "No input received";
     private string _lastPoint = "-";
 
-    public InputProbeForm(string theme, string outputRoot)
+    public InputProbeForm(string theme, string outputRoot, string windowMode)
     {
         _theme = theme;
         _outputRoot = outputRoot;
+        _windowMode = windowMode;
         _eventLogPath = Path.Combine(outputRoot, "lower-window-events.jsonl");
         _scenarioMarkerPath = Path.Combine(outputRoot, "current-scenario.txt");
-        FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.Manual;
-        Bounds = Screen.PrimaryScreen?.Bounds ?? throw new InvalidOperationException("Primary screen not found.");
-        ShowInTaskbar = false;
-        TopMost = true;
+        var screen = Screen.PrimaryScreen ?? throw new InvalidOperationException("Primary screen not found.");
+        switch (windowMode)
+        {
+            case "Overlay":
+                FormBorderStyle = FormBorderStyle.None;
+                Bounds = screen.Bounds;
+                ShowInTaskbar = false;
+                TopMost = true;
+                break;
+            case "Borderless":
+                FormBorderStyle = FormBorderStyle.None;
+                Bounds = screen.Bounds;
+                ShowInTaskbar = false;
+                TopMost = false;
+                break;
+            case "Maximized":
+                FormBorderStyle = FormBorderStyle.Sizable;
+                Bounds = screen.WorkingArea;
+                ShowInTaskbar = true;
+                TopMost = false;
+                WindowState = FormWindowState.Maximized;
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(windowMode));
+        }
         DoubleBuffered = true;
         BackColor = theme == "Light" ? Color.White : Color.FromArgb(20, 22, 27);
         Text = "GlassDock M0 controlled input sink";
@@ -124,15 +151,17 @@ internal sealed class InputProbeForm : Form
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
-        SetWindowPos(Handle, new nint(-1), Left, Top, Width, Height, 0x0040);
+        if (_windowMode == "Overlay")
+            SetWindowPos(Handle, new nint(-1), Left, Top, Width, Height, 0x0040);
         Activate();
         SetForegroundWindow(Handle);
         var foregroundWindow = GetForegroundWindow();
         GetWindowThreadProcessId(foregroundWindow, out var foregroundProcessId);
         var screen = Screen.PrimaryScreen?.Bounds ?? Rectangle.Empty;
         var foregroundConfirmed = foregroundProcessId == Environment.ProcessId;
-        var fullscreenCovered = Left <= screen.Left && Top <= screen.Top &&
-            Right >= screen.Right && Bottom >= screen.Bottom && IsWindowVisible(Handle);
+        var expectedBounds = _windowMode == "Maximized" ? Screen.PrimaryScreen?.WorkingArea ?? Rectangle.Empty : screen;
+        var fullscreenCovered = Left <= expectedBounds.Left && Top <= expectedBounds.Top &&
+            Right >= expectedBounds.Right && Bottom >= expectedBounds.Bottom && IsWindowVisible(Handle);
         var ready = new
         {
             ReadyAtUtc = DateTimeOffset.UtcNow,
@@ -140,9 +169,15 @@ internal sealed class InputProbeForm : Form
             WindowHandle = $"0x{Handle.ToInt64():X}",
             ForegroundProcessId = foregroundProcessId,
             ForegroundConfirmed = foregroundConfirmed,
-            FullscreenCovered = fullscreenCovered,
+            ExpectedAreaCovered = fullscreenCovered,
+            WindowMode = _windowMode,
+            WindowState = WindowState.ToString(),
+            TopMost,
             Theme = _theme,
             Bounds = new { Left, Top, Width, Height },
+            ScreenBounds = new { screen.Left, screen.Top, screen.Width, screen.Height },
+            WorkingArea = new { Left = Screen.PrimaryScreen?.WorkingArea.Left, Top = Screen.PrimaryScreen?.WorkingArea.Top,
+                Width = Screen.PrimaryScreen?.WorkingArea.Width, Height = Screen.PrimaryScreen?.WorkingArea.Height },
             Dpi = DeviceDpi,
             EventLog = _eventLogPath
         };
@@ -150,7 +185,7 @@ internal sealed class InputProbeForm : Form
         if (!foregroundConfirmed || !fullscreenCovered)
         {
             File.WriteAllText(Path.Combine(_outputRoot, "input-probe-error.txt"),
-                $"ForegroundConfirmed={foregroundConfirmed}; FullscreenCovered={fullscreenCovered}; bounds={Bounds}; screen={screen}");
+                $"ForegroundConfirmed={foregroundConfirmed}; ExpectedAreaCovered={fullscreenCovered}; mode={_windowMode}; bounds={Bounds}; expected={expectedBounds}");
             Close();
             return;
         }

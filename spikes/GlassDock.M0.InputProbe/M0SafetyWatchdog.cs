@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Threading;
 
 namespace GlassDock.M0.InputProbe;
 
@@ -15,6 +16,7 @@ internal static class M0SafetyWatchdog
     private const uint ModNoRepeat = 0x4000;
     private const uint VkF12 = 0x7B;
     private const uint MouseLeftUp = 0x0004;
+    private const uint MouseRightUp = 0x0010;
     private const ulong SyntheticInputMarker = 0x474C415353444F43;
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true, WriteIndented = true };
     private static Options? _options;
@@ -169,8 +171,11 @@ internal static class M0SafetyWatchdog
             {
                 if (manifest.MouseButtonDown)
                     ReleaseInjectedLeftButton(_options);
+                if (manifest.RightMouseButtonDown)
+                    ReleaseInjectedRightButton(_options);
                 StopOwnedProcesses(_options, manifest);
-                RestoreForeground(_options, manifest.ForegroundWindowHandle);
+                RestoreForeground(_options, manifest);
+                RestoreCursor(_options, manifest);
                 RestoreFiles(_options, manifest);
             }
             WriteLog(_options, new { Event = "WatchdogStopped", Reason = reason, KillOwnedProcesses = killOwnedProcesses });
@@ -270,11 +275,98 @@ internal static class M0SafetyWatchdog
         }
     }
 
-    private static void RestoreForeground(Options options, long hwndValue)
+    private static void RestoreForeground(Options options, SafetyManifest manifest)
     {
+        var hwndValue = manifest.ForegroundWindowHandle;
         var hwnd = new IntPtr(hwndValue);
-        var success = hwndValue == 0 || (IsWindow(hwnd) && SetForegroundWindow(hwnd));
-        WriteLog(options, new { Event = "ForegroundRestoreAttempted", Hwnd = $"0x{hwndValue:X}", Success = success, StillValid = hwndValue == 0 || IsWindow(hwnd) });
+        if (hwndValue == 0)
+        {
+            WriteLog(options, new { Event = "ForegroundRestoreAttempted", Hwnd = "0x0", Success = true, Reason = "No foreground HWND was captured." });
+            return;
+        }
+
+        var valid = IsWindow(hwnd) && IsWindowVisible(hwnd);
+        uint actualProcessId = 0;
+        if (valid)
+            _ = GetWindowThreadProcessId(hwnd, out actualProcessId);
+        if (!valid || (manifest.ForegroundProcessId != 0 && actualProcessId != manifest.ForegroundProcessId))
+        {
+            WriteLog(options, new
+            {
+                Event = "ForegroundRestoreRefused",
+                Hwnd = $"0x{hwndValue:X}",
+                ExpectedProcessId = manifest.ForegroundProcessId,
+                ActualProcessId = actualProcessId,
+                StillValid = valid,
+                Reason = "Captured window is no longer visible/live or its process identity changed."
+            });
+            return;
+        }
+
+        var success = false;
+        var attempts = 0;
+        for (; attempts < 12; attempts++)
+        {
+            _ = SetForegroundWindow(hwnd);
+            Thread.Sleep(150);
+            if (GetForegroundWindow() == hwnd)
+            {
+                success = true;
+                attempts++;
+                break;
+            }
+        }
+        WriteLog(options, new
+        {
+            Event = "ForegroundRestoreAttempted",
+            Hwnd = $"0x{hwndValue:X}",
+            ExpectedProcessId = manifest.ForegroundProcessId,
+            ActualProcessId = actualProcessId,
+            Success = success,
+            Attempts = attempts,
+            StillValid = IsWindow(hwnd)
+        });
+    }
+
+    private static void RestoreCursor(Options options, SafetyManifest manifest)
+    {
+        if (!manifest.CursorMovePending)
+        {
+            WriteLog(options, new { Event = "CursorRestoreSkipped", Reason = "No synthetic pointer movement was registered." });
+            return;
+        }
+
+        var success = false;
+        var current = new NativePoint();
+        var queried = GetCursorPos(out current);
+        var stillAtInjectedTarget = queried &&
+            Math.Abs(current.X - manifest.InjectedCursorX) <= 2 &&
+            Math.Abs(current.Y - manifest.InjectedCursorY) <= 2;
+        if (stillAtInjectedTarget)
+        {
+            success = SetCursorPos(manifest.OriginalCursorX, manifest.OriginalCursorY) &&
+                GetCursorPos(out current) &&
+                Math.Abs(current.X - manifest.OriginalCursorX) <= 2 &&
+                Math.Abs(current.Y - manifest.OriginalCursorY) <= 2;
+        }
+        else if (queried)
+        {
+            // The user moved the pointer after the last synthetic target; do not override that newer input.
+            success = true;
+        }
+
+        WriteLog(options, new
+        {
+            Event = "CursorRestoreAttempted",
+            Success = success,
+            UserMovedSinceLastInjection = queried && !stillAtInjectedTarget,
+            OriginalX = manifest.OriginalCursorX,
+            OriginalY = manifest.OriginalCursorY,
+            InjectedTargetX = manifest.InjectedCursorX,
+            InjectedTargetY = manifest.InjectedCursorY,
+            CurrentX = current.X,
+            CurrentY = current.Y
+        });
     }
 
     private static void ReleaseInjectedLeftButton(Options options)
@@ -289,6 +381,20 @@ internal static class M0SafetyWatchdog
         };
         var sent = SendInput(1, new[] { input }, Marshal.SizeOf<Input>());
         WriteLog(options, new { Event = "InjectedLeftButtonRelease", Sent = sent, Win32Error = sent == 1 ? 0 : Marshal.GetLastWin32Error() });
+    }
+
+    private static void ReleaseInjectedRightButton(Options options)
+    {
+        var input = new Input
+        {
+            Type = 0,
+            Data = new InputUnion
+            {
+                Mouse = new MouseInput { Flags = MouseRightUp, ExtraInfo = new UIntPtr(SyntheticInputMarker) }
+            }
+        };
+        var sent = SendInput(1, new[] { input }, Marshal.SizeOf<Input>());
+        WriteLog(options, new { Event = "InjectedRightButtonRelease", Sent = sent, Win32Error = sent == 1 ? 0 : Marshal.GetLastWin32Error() });
     }
 
     private static void WriteReady(Options options, bool success, string? error, int win32Error)
@@ -347,7 +453,14 @@ internal static class M0SafetyWatchdog
         public string EvidenceRoot { get; set; } = string.Empty;
         public long DeadlineUnixMilliseconds { get; set; }
         public long ForegroundWindowHandle { get; set; }
+        public int ForegroundProcessId { get; set; }
+        public int OriginalCursorX { get; set; }
+        public int OriginalCursorY { get; set; }
+        public int InjectedCursorX { get; set; }
+        public int InjectedCursorY { get; set; }
+        public bool CursorMovePending { get; set; }
         public bool MouseButtonDown { get; set; }
+        public bool RightMouseButtonDown { get; set; }
         public List<OwnedProcessIdentity> Processes { get; set; } = [];
         public List<FileRestoreEntry> FileRestores { get; set; } = [];
     }
@@ -386,6 +499,11 @@ internal static class M0SafetyWatchdog
     [DllImport("user32.dll", SetLastError = true)] private static extern bool PostThreadMessage(uint threadId, uint message, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll", SetLastError = true)] private static extern uint SendInput(uint count, Input[] inputs, int size);
     [DllImport("user32.dll", SetLastError = true)] private static extern bool SetForegroundWindow(IntPtr hwnd);
+    [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
     [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr hwnd);
+    [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hwnd);
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool GetCursorPos(out NativePoint point);
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool SetCursorPos(int x, int y);
     [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
 }

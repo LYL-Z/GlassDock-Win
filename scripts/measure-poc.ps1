@@ -75,7 +75,7 @@ Add-Type -TypeDefinition $nativeMethods
 
 $watchdogExe = Join-Path $script:RepoRoot 'spikes\GlassDock.M0.InputProbe\bin\Release\net10.0-windows10.0.19041.0\win-x64\GlassDock.M0.InputProbe.exe'
 if (-not (Test-Path -LiteralPath $watchdogExe)) { throw "Build the safety watchdog first: $watchdogExe" }
-Confirm-M0InteractiveTest $ConfirmInteractiveTest -Purpose "show a topmost $Candidate Dock window for idle resource sampling"
+Confirm-M0InteractiveTest -Confirmed:$ConfirmInteractiveTest -Purpose "show a topmost $Candidate Dock window for idle resource sampling"
 if (-not $PSCmdlet.ShouldProcess('Current desktop', 'Launch visible topmost Dock PoC and collect local idle resource samples')) { return }
 $session = Start-M0InteractiveTestSession -RepoRoot $script:RepoRoot -LocalRoot $script:LocalRoot `
     -Purpose "visible $Candidate topmost Dock window; CPU/memory samples only; no frame-time claim" `

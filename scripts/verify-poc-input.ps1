@@ -8,12 +8,17 @@ param(
     [ValidateSet('Bottom', 'Left', 'Right')]
     [string[]]$Edges = @('Bottom', 'Left', 'Right'),
     [ValidateSet('Light', 'Dark')]
-    [string]$Theme = 'Light'
+    [string]$Theme = 'Light',
+    [switch]$UseWinUiRoundedRegionCandidate
 )
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
 . (Join-Path $PSScriptRoot 'interactive-test-safety.ps1')
+
+if ($UseWinUiRoundedRegionCandidate -and (@($Candidates | Where-Object { $_ -ne 'WinUI' }).Count -gt 0)) {
+    throw '-UseWinUiRoundedRegionCandidate is restricted to a WinUI-only run.'
+}
 
 $nativeMethods = @'
 using System;
@@ -55,18 +60,23 @@ public static class GlassDockM0Native
         IntPtr found = IntPtr.Zero;
         EnumWindows((hwnd, _) =>
         {
-            GetWindowThreadProcessId(hwnd, out uint pid);
+            uint pid;
+            GetWindowThreadProcessId(hwnd, out pid);
             if (pid == targetPid && IsWindowVisible(hwnd)) { found = hwnd; return false; }
             return true;
         }, IntPtr.Zero);
         return found;
     }
 
-    public static bool TryGetRect(IntPtr hwnd, out GlassDockM0Rect rect) => GetWindowRect(hwnd, out rect);
+    public static bool TryGetRect(IntPtr hwnd, out GlassDockM0Rect rect)
+    {
+        return GetWindowRect(hwnd, out rect);
+    }
     public static int GetWindowPidAt(int x, int y)
     {
         var hwnd = WindowFromPoint(new GlassDockM0Point { X = x, Y = y });
-        GetWindowThreadProcessId(hwnd, out uint pid);
+        uint pid;
+        GetWindowThreadProcessId(hwnd, out pid);
         return unchecked((int)pid);
     }
 
@@ -76,13 +86,15 @@ public static class GlassDockM0Native
         var top = GetSystemMetrics(77);
         var width = Math.Max(1, GetSystemMetrics(78));
         var height = Math.Max(1, GetSystemMetrics(79));
-        var dx = (int)Math.Round(Math.Clamp((x - left) * 65535.0 / Math.Max(1, width - 1), 0, 65535));
-        var dy = (int)Math.Round(Math.Clamp((y - top) * 65535.0 / Math.Max(1, height - 1), 0, 65535));
+        var normalizedX = (x - left) * 65535.0 / Math.Max(1, width - 1);
+        var normalizedY = (y - top) * 65535.0 / Math.Max(1, height - 1);
+        var dx = (int)Math.Round(Math.Max(0, Math.Min(65535, normalizedX)));
+        var dy = (int)Math.Round(Math.Max(0, Math.Min(65535, normalizedY)));
         Send(MouseMove | Absolute | VirtualDesktop, dx, dy);
     }
 
-    public static void LeftDown() => Send(MouseLeftDown, 0, 0);
-    public static void LeftUp() => Send(MouseLeftUp, 0, 0);
+    public static void LeftDown() { Send(MouseLeftDown, 0, 0); }
+    public static void LeftUp() { Send(MouseLeftUp, 0, 0); }
 
     private static void Send(uint flags, int dx, int dy)
     {
@@ -98,7 +110,7 @@ public static class GlassDockM0Native
             }
         };
         var sent = SendInput(1, new[] { input }, Marshal.SizeOf<GlassDockM0Input>());
-        if (sent != 1) throw new InvalidOperationException($"SendInput failed; sent={sent}; Win32={Marshal.GetLastWin32Error()}.");
+        if (sent != 1) throw new InvalidOperationException(string.Format("SendInput failed; sent={0}; Win32={1}.", sent, Marshal.GetLastWin32Error()));
     }
 }
 '@
@@ -112,7 +124,7 @@ $existingProbe = @(Get-Process -Name 'GlassDock.M0.InputProbe' -ErrorAction Sile
     catch { $false }
 })
 if ($existingProbe.Count -gt 0) { throw 'An InputProbe process from this build already exists. It was left untouched; close it manually before scheduling this test.' }
-Confirm-M0InteractiveTest $ConfirmInteractiveTest -Purpose 'full-screen input sink with synthetic click and drag injection'
+Confirm-M0InteractiveTest -Confirmed:$ConfirmInteractiveTest -Purpose 'full-screen input sink with synthetic click and drag injection'
 if (-not $PSCmdlet.ShouldProcess('Current desktop', 'Show a fullscreen test backdrop and inject synthetic mouse clicks and drags')) { return }
 $session = Start-M0InteractiveTestSession -RepoRoot $script:RepoRoot -LocalRoot $script:LocalRoot `
     -Purpose 'full-screen input routing: WPF and WinUI 3, selected edges, synthetic left click/double-click/drag' `
@@ -129,6 +141,7 @@ $oldStateRoot = $env:GLASSDOCK_POC_STATE_ROOT
 $oldTrace = $env:GLASSDOCK_M0_INPUT_TRACE
 $oldItemCount = $env:GLASSDOCK_POC_ITEM_COUNT
 $oldIconSize = $env:GLASSDOCK_POC_ICON_SIZE
+$oldWindowRegion = $env:GLASSDOCK_M0_TEST_ROUNDED_REGION
 
 function Get-JsonLinesForScenario([string]$Path, [string]$Scenario) {
     if (-not (Test-Path -LiteralPath $Path)) { return @() }
@@ -145,6 +158,7 @@ function Set-DockScenario([string]$Root, [string]$Scenario) {
 
 function Invoke-MouseClick([int]$X, [int]$Y, [int]$Count = 1) {
     Assert-M0InteractiveTestCanContinue $script:InteractiveSafetySession
+    Set-M0InteractiveCursorTarget $script:InteractiveSafetySession $X $Y
     [GlassDockM0Native]::MoveTo($X, $Y)
     Start-Sleep -Milliseconds 80
     for ($click = 0; $click -lt $Count; $click++) {
@@ -160,6 +174,7 @@ function Invoke-MouseClick([int]$X, [int]$Y, [int]$Count = 1) {
 
 function Invoke-MouseDrag([int]$FromX, [int]$FromY, [int]$ToX, [int]$ToY) {
     Assert-M0InteractiveTestCanContinue $script:InteractiveSafetySession
+    Set-M0InteractiveCursorTarget $script:InteractiveSafetySession $FromX $FromY
     [GlassDockM0Native]::MoveTo($FromX, $FromY)
     Start-Sleep -Milliseconds 80
     Assert-M0InteractiveTestCanContinue $script:InteractiveSafetySession
@@ -168,9 +183,12 @@ function Invoke-MouseDrag([int]$FromX, [int]$FromY, [int]$ToX, [int]$ToY) {
     try {
         Start-Sleep -Milliseconds 80
         Assert-M0InteractiveTestCanContinue $script:InteractiveSafetySession
-        [GlassDockM0Native]::MoveTo([int](($FromX + $ToX) / 2), [int](($FromY + $ToY) / 2))
+        $middleX=[int](($FromX + $ToX) / 2);$middleY=[int](($FromY + $ToY) / 2)
+        Set-M0InteractiveCursorTarget $script:InteractiveSafetySession $middleX $middleY
+        [GlassDockM0Native]::MoveTo($middleX,$middleY)
         Start-Sleep -Milliseconds 80
         Assert-M0InteractiveTestCanContinue $script:InteractiveSafetySession
+        Set-M0InteractiveCursorTarget $script:InteractiveSafetySession $ToX $ToY
         [GlassDockM0Native]::MoveTo($ToX, $ToY)
         Start-Sleep -Milliseconds 80
     }
@@ -207,12 +225,14 @@ try {
             for ($attempt = 0; $attempt -lt 80 -and -not (Test-Path -LiteralPath $readyPath); $attempt++) { Start-Sleep -Milliseconds 100 }
             if (-not (Test-Path -LiteralPath $readyPath)) { throw "Input probe did not become ready: $candidate/$edge" }
             $ready = Get-Content -LiteralPath $readyPath -Raw | ConvertFrom-Json
-            if (-not $ready.ForegroundConfirmed -or -not $ready.FullscreenCovered) { throw "Input probe refused test: $candidate/$edge" }
+            if (-not $ready.ForegroundConfirmed -or -not $ready.ExpectedAreaCovered) { throw "Input probe refused test: $candidate/$edge" }
 
             $env:GLASSDOCK_POC_STATE_ROOT = $stateRoot
             $env:GLASSDOCK_M0_INPUT_TRACE = '1'
             $env:GLASSDOCK_POC_ITEM_COUNT = '8'
             $env:GLASSDOCK_POC_ICON_SIZE = '58'
+            if ($UseWinUiRoundedRegionCandidate) { $env:GLASSDOCK_M0_TEST_ROUNDED_REGION = '1' }
+            else { Remove-Item Env:GLASSDOCK_M0_TEST_ROUNDED_REGION -ErrorAction SilentlyContinue }
             $candidateProcess = Start-M0OwnedTestProcess -Session $session -FilePath $pocExe -WorkingDirectory $projectFolder
             for ($attempt = 0; $attempt -lt 100; $attempt++) {
                 $candidateProcess.Refresh()
@@ -289,6 +309,7 @@ try {
                 }
                 $results.Add([pscustomobject]@{
                     Candidate = $candidate
+                    CandidateVariant = if ($UseWinUiRoundedRegionCandidate) { 'WinUI SetWindowRgn rounded-region opt-in' } else { 'Default' }
                     Edge = $edge
                     Theme = $Theme
                     Scenario = $scenario
@@ -323,7 +344,8 @@ finally {
         @{ Name='GLASSDOCK_POC_STATE_ROOT'; Value=$oldStateRoot },
         @{ Name='GLASSDOCK_M0_INPUT_TRACE'; Value=$oldTrace },
         @{ Name='GLASSDOCK_POC_ITEM_COUNT'; Value=$oldItemCount },
-        @{ Name='GLASSDOCK_POC_ICON_SIZE'; Value=$oldIconSize }
+        @{ Name='GLASSDOCK_POC_ICON_SIZE'; Value=$oldIconSize },
+        @{ Name='GLASSDOCK_M0_TEST_ROUNDED_REGION'; Value=$oldWindowRegion }
     )) {
         if ($null -eq $entry.Value) { Remove-Item "Env:$($entry.Name)" -ErrorAction SilentlyContinue }
         else { [Environment]::SetEnvironmentVariable($entry.Name, [string]$entry.Value, 'Process') }
