@@ -4,6 +4,7 @@ using System.Numerics;
 using GlassDock.App;
 using GlassDock.Core;
 using Microsoft.UI.Composition;
+using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
@@ -39,6 +40,7 @@ public sealed partial class MainWindow : Window, IDockWindowHost
     private int _itemCount;
     private double _requestedIconSize;
     private double _effectiveIconSize;
+    private bool _m0RoundedRegionApplied;
 
     public MainWindow()
     {
@@ -367,6 +369,19 @@ public sealed partial class MainWindow : Window, IDockWindowHost
     private void ConfigureVisualCandidate()
     {
         var candidate = Environment.GetEnvironmentVariable("GLASSDOCK_M0_VISUAL_CANDIDATE");
+        if (string.Equals(candidate, "winui-window-system-acrylic", StringComparison.Ordinal))
+        {
+            BackdropElement.Visibility = Visibility.Collapsed;
+            SystemBackdrop = new Microsoft.UI.Xaml.Media.DesktopAcrylicBackdrop();
+            GlassPanel.Background = new SolidColorBrush(Colors.Transparent);
+            GlassPanel.BorderBrush = new SolidColorBrush(ColorHelper.FromArgb(0xE6, 255, 255, 255));
+            GlassPanel.Shadow = null;
+            DockLogger.Info("M0 window-level DesktopAcrylicBackdrop candidate enabled on the project Dock HWND; " +
+                            "SystemBackdropElement, custom CompositionBackdropBrush, ThemeShadow, and SetWindowRgn are disabled for isolation. " +
+                            "The transparent XAML root/panel must be verified in WGC; API assignment is not visual proof.");
+            return;
+        }
+
         if (string.Equals(candidate, "winui-composition-backdrop-blur", StringComparison.Ordinal))
         {
             BackdropElement.Visibility = Visibility.Collapsed;
@@ -397,8 +412,8 @@ public sealed partial class MainWindow : Window, IDockWindowHost
 
     private void WriteCompositionWindowStatus(uint dpi)
     {
-        if (!string.Equals(Environment.GetEnvironmentVariable("GLASSDOCK_M0_VISUAL_CANDIDATE"),
-                "winui-composition-backdrop-blur", StringComparison.Ordinal))
+        var visualCandidate = Environment.GetEnvironmentVariable("GLASSDOCK_M0_VISUAL_CANDIDATE");
+        if (visualCandidate is not ("winui-composition-backdrop-blur" or "winui-window-system-acrylic"))
             return;
 
         var statusRoot = Environment.GetEnvironmentVariable("GLASSDOCK_M0_COMPOSITION_STATUS_ROOT");
@@ -415,14 +430,87 @@ public sealed partial class MainWindow : Window, IDockWindowHost
             ProcessId = Environment.ProcessId,
             Dpi = dpi,
             BoundsPx = rectAvailable ? new { rect.Left, rect.Top, rect.Right, rect.Bottom } : null,
+            WindowsVersion = Environment.OSVersion.VersionString,
+            IsRemoteSession = GetSystemMetrics(0x1000) != 0,
+            TransparencyEffectsEnabled = TryReadTransparencyEffectsEnabled(),
+            HighContrastEnabled = TryReadHighContrastEnabled(),
+            EnergySaverStatus = TryReadEnergySaverStatus(),
             UsesLayeredWindow = false,
-            CompositionCandidate = "CompositionBackdropBrush + GaussianBlurEffect",
+            VisualCandidate = visualCandidate,
+            CompositionCandidate = visualCandidate == "winui-composition-backdrop-blur"
+                ? "CompositionBackdropBrush + GaussianBlurEffect"
+                : null,
+            BackdropSourceFactory = visualCandidate == "winui-composition-backdrop-blur"
+                ? "CompositionTarget.GetCompositorForCurrentThread().CreateBackdropBrush()"
+                : null,
+            BackdropBrushTarget = visualCandidate == "winui-composition-backdrop-blur"
+                ? "GlassPanel.Background via XamlCompositionBrushBase"
+                : null,
+            SystemBackdropCandidate = visualCandidate == "winui-window-system-acrylic"
+                ? "Window.SystemBackdrop = DesktopAcrylicBackdrop"
+                : null,
+            SystemBackdropSupportReported = visualCandidate == "winui-window-system-acrylic"
+                ? (bool?)DesktopAcrylicController.IsSupported()
+                : null,
+            SystemBackdropCoverage = visualCandidate == "winui-window-system-acrylic"
+                ? "Window.SystemBackdrop is behind all Window.Content; the transparent root and rounded XAML Border do not clip the system backdrop. This candidate intentionally has no SetWindowRgn."
+                : null,
+            SystemBackdropFallbackReasonExposedByApi = false,
+            BackdropElementVisible = BackdropElement.Visibility == Visibility.Visible,
+            BackdropElementSystemBackdrop = BackdropElement.SystemBackdrop?.GetType().FullName,
+            WindowSystemBackdrop = SystemBackdrop?.GetType().FullName,
+            RootType = LayoutRoot.GetType().FullName,
+            RootBackground = "Transparent XAML Grid",
+            GlassPanelCornerRadiusDip = M0WindowRegionCornerRadiusDip,
+            RoundedRegionRequested = string.Equals(
+                Environment.GetEnvironmentVariable("GLASSDOCK_M0_TEST_ROUNDED_REGION"), "1", StringComparison.Ordinal),
+            RoundedRegionApplied = _m0RoundedRegionApplied,
+            ExternalBackdropSampling = "Requires review of the paired WGC capture; API assignment/object creation is not sampling proof",
             RoundedRegionCandidateRequested = string.Equals(
                 Environment.GetEnvironmentVariable("GLASSDOCK_M0_TEST_ROUNDED_REGION"), "1", StringComparison.Ordinal)
         };
         Directory.CreateDirectory(statusRoot);
         File.WriteAllText(Path.Combine(statusRoot, "project-dock-window.json"),
             JsonSerializer.Serialize(status, new JsonSerializerOptions { WriteIndented = true }));
+    }
+
+    private static bool? TryReadTransparencyEffectsEnabled()
+    {
+        try
+        {
+            return new Windows.UI.ViewManagement.UISettings().AdvancedEffectsEnabled;
+        }
+        catch (Exception exception)
+        {
+            DockLogger.Error("Could not read the Windows transparency-effects preference for the M0 composition probe.", exception);
+            return null;
+        }
+    }
+
+    private static bool? TryReadHighContrastEnabled()
+    {
+        try
+        {
+            return new Windows.UI.ViewManagement.AccessibilitySettings().HighContrast;
+        }
+        catch (Exception exception)
+        {
+            DockLogger.Error("Could not read the Windows high-contrast preference for the M0 composition probe.", exception);
+            return null;
+        }
+    }
+
+    private static string? TryReadEnergySaverStatus()
+    {
+        try
+        {
+            return Microsoft.Windows.System.Power.PowerManager.EnergySaverStatus.ToString();
+        }
+        catch (Exception exception)
+        {
+            DockLogger.Error("Could not read the Windows energy-saver state for the M0 composition probe.", exception);
+            return null;
+        }
     }
 
     private void AnimateScale(FrameworkElement element, double target)
@@ -514,6 +602,7 @@ public sealed partial class MainWindow : Window, IDockWindowHost
 
         var applied = SetWindowRgn(_hwnd, region, true);
         var error = applied == 0 ? Marshal.GetLastWin32Error() : 0;
+        _m0RoundedRegionApplied = applied != 0;
         if (applied == 0)
             _ = DeleteObject(region);
 
@@ -531,6 +620,9 @@ public sealed partial class MainWindow : Window, IDockWindowHost
 
     [DllImport("user32.dll")]
     private static extern uint GetDpiForWindow(nint hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern int GetSystemMetrics(int index);
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool GetWindowRect(nint hWnd, out NativeRect rect);

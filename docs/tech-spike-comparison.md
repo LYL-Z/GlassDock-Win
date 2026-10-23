@@ -2,7 +2,7 @@
 
 更新日期：2026-10-23。本文区分已观测结果、公开 API 能力和未验证推断；不代表生产框架已选定。
 
-> **范围变更说明：** 原始 33 项 M0 证据仍保留在 [基线矩阵](dock-evidence/M0/REQ-matrix.md)；完整视觉、动画、硬件矩阵与性能验收已按有记录的变更移交后续阶段，不代表 PASS 或豁免。逐 ID 去向见 [迁移矩阵](dock-evidence/M0/M0-to-M1-requirement-migration.md)。最终有限 Composition 尝试已运行但目标 Dock 路径未显示 blur；阶段决定为 **NO-GO，不进入 M1，不冻结路线**，见 [最终决策](dock-evidence/M0/M0-final-technical-decision.md)。
+> **范围变更说明：** 原始 33 项 M0 证据仍保留在 [基线矩阵](dock-evidence/M0/REQ-matrix.md)；完整视觉、动画、硬件矩阵与性能验收已按有记录的变更移交后续阶段，不代表 PASS 或豁免。逐 ID 去向见 [迁移矩阵](dock-evidence/M0/M0-to-M1-requirement-migration.md)。最终有限 Composition 尝试已运行但目标 Dock 路径未显示 blur；M0 技术决策仍为 **NO-GO，技术路线未冻结**。之后只获准并行开展 M1 规格研究，不包括生产实现或阶段验收。见 [最终决策](dock-evidence/M0/M0-final-technical-decision.md) 与 [M0/M1 并行变更记录](dock-evidence/M0/M0-M1-parallel-work-change-2026-10-23.md)。
 
 ## 当前判断
 
@@ -115,7 +115,7 @@ API 依据：[WPF ShowActivated](https://learn.microsoft.com/en-us/dotnet/api/sy
 
 实际透明输入证据仍由 WPF 默认路径 18/18 与 WinUI region 候选 18/18 支持；WinUI 默认透明区 9/9 失败。材料证据则是本轮三候选各 6 场景，视觉 0/18 通过。性能方面仍无应用 trace、进程 Present 或 scanout 数据，DWM 全局 240Hz 数值不替代 Dock 动画测量。独占全屏启动的焦点/状态问题仍未解决。
 
-因此本轮阶段结论为 **NO-GO：不冻结 WPF，不放弃 WinUI，不进入 M1，不启动原生 DirectComposition PoC。** 本轮运行因恢复标志失败而停止；任何后续实际桌面捕获、焦点/全屏、输入、显示设置或性能动画测试，都必须另行取得明确授权。原始 33 项仍按各自 ID 跟踪，不改写成 PASS。
+因此 M0 技术结论仍为 **NO-GO：不冻结 WPF，不放弃 WinUI，不启动原生 DirectComposition PoC。** 负责人之后批准 M1 独立规格研究与技术收尾并行，但不批准依赖窗口/渲染路线的生产实现。上一轮运行因恢复标志失败而停止；任何后续实际桌面捕获、焦点/全屏、输入、显示设置或性能动画测试，都必须另行取得明确授权。原始 33 项仍按各自 ID 跟踪，不改写成 PASS。
 
 ## 主要历史证据
 

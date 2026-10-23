@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "status": "INCOMPLETE_NO_MAC_HARDWARE_SAMPLE",
+  "targetBaseline": {
+    "macOSVersion": "27",
+    "source": "Original 00/01 taskbook target; not a measured device version",
+    "deviceModel": null,
+    "build": null,
+    "displayTopology": null,
+    "displayResolutionPx": null,
+    "displayScale": null,
+    "refreshRateHz": null,
+    "dockPosition": null,
+    "dockSizeSetting": null,
+    "magnificationSetting": null,
+    "theme": null,
+    "wallpaperId": null,
+    "dockPreferences": null
+  },
+  "samples": [
+    { "referenceId": "REF-01", "status": "missing_reference", "sourcePath": null, "rightsReview": "No asset collected" },
+    { "referenceId": "REF-02", "status": "missing_reference", "sourcePath": null, "rightsReview": "No asset collected" },
+    { "referenceId": "REF-03", "status": "missing_reference", "sourcePath": null, "rightsReview": "No asset collected" },
+    { "referenceId": "REF-04", "status": "missing_reference", "sourcePath": null, "rightsReview": "No asset collected" },
+    { "referenceId": "REF-05", "status": "missing_reference", "sourcePath": null, "rightsReview": "No asset collected" },
+    { "referenceId": "REF-06", "status": "missing_reference", "sourcePath": null, "rightsReview": "No asset collected" },
+    { "referenceId": "REF-07", "status": "missing_reference", "sourcePath": null, "rightsReview": "No asset collected" }
+  ],
+  "capturedAssetsInRepository": [],
+  "macHardwareObservation": "NOT TESTED"
+}

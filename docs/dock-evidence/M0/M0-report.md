@@ -2,9 +2,9 @@
 
 - 更新日期：2026-10-23（测试记录使用 UTC 文件夹名）
 - 仓库：`D:\MacOS\GlassDock-Win`
-- 当前结论：**M0 未通过；不进入 M1；不冻结 WPF、WinUI 3 或 Win32 + DirectComposition。**
+- 当前技术结论：**M0 未通过；不冻结 WPF、WinUI 3 或 Win32 + DirectComposition；不允许依赖该路线的生产实现。** 后续阶段依赖调整只开放独立 M1 规格研究线；该线不改变 M0 状态，也不代表 M1 整体通过。
 - 桌面测试证据基线提交 `8be36ea111e35875dbc3ff8cab96474a36e6d413` 的 Windows CI run `39896333410` Build/Test 成功。本轮架构探针代码提交 `8f6ca23ecb159dd20e71e0ef303a691cda9293ab` 的 run `39924864083` Build/Test 也成功；两个提交均不代表 M0 整体验收通过。
-- 本次实际执行了已获批准的输入路由、WGC 视觉、窗口共存、显示刷新、托盘/配置恢复及 DXGI 独占全屏测试。未提权、未启动 M1、未改 LICENSE、未创建 Release。
+- 本报告中的桌面操作只涵盖本报告所述时点已获批准的场景；后续最小桌面申请另有启动短语和范围。未提权、未改 LICENSE、未创建 Release。报告原发时 M1 规格线未启动；其后只获准按变更记录开展不依赖最终 Windows 技术选型的规格研究。
 - 2026-10-23 本次续作先实施默认关闭的系统材质/非激活启动候选、应用侧性能记录器、托盘命令路由单测及文档/脚本修订；收到用户指定短语 RUN M0 DESKTOP TEST 后，仅执行本次获批的 18 场景 WGC 视觉矩阵。没有追加输入、全屏、显示模式或其他交互测试。
 - 最终有界实验（2026-10-23，`RUN M0 FINAL DESKTOP TEST`）仅完成独立 Composition blur 对照和 WinUI Dock 捕获；WPF 非激活窗口观测导致脚本中止，未运行 WinUI 非激活或 DXGI companion。最新阶段决策见第 12 节。
 
@@ -151,7 +151,7 @@ WPF 默认透明路由证据较强，但其独占全屏窗口虽保持 DXGI excl
 
 仍阻止验收的事项：三条视觉候选的真实背景模糊与干净边缘均未通过；WPF 在独占全屏时保持 DXGI exclusive 但前台 PID 为 Dock；WinUI 启动后成为前台并使 DXGI exclusive 退出；独占下实际游戏输入与退出后的自动恢复未测；WinUI tray 实际键盘/鼠标选择与辅助功能路径未测；100/150/200% DPI 和多屏未测；应用计时 trace、独立进程 Present 与面板 scanout 未取得；正式许可证继续待权利人决定。当前已完成的视觉捕获不证明应用动画性能。
 
-**结论：M0 不通过，M1 不开始，技术路线不冻结。** 本次视觉 FAIL 不足以判定 WPF 或 WinUI 框架本身不可能；它否定的是当前 WPF layered HWND + DWM backdrop 和当前 WinUI Desktop Acrylic 组合的视觉结果。暂不启动原生 DirectComposition PoC；在重新获批的下一轮中，可将单次 WinUI Composition 背景采样/blur/mask 与 WPF Visual Layer 作为有界候选，按预先定义的停止条件验证。不得在未获得新桌面测试授权时启动新捕获或交互。
+**本报告原始形成时的结论：M0 不通过，M1 不开始，技术路线不冻结。** 本次视觉 FAIL 不足以判定 WPF 或 WinUI 框架本身不可能；它否定的是当前 WPF layered HWND + DWM backdrop 和当前 WinUI Desktop Acrylic 组合的视觉结果。暂不启动原生 DirectComposition PoC；在重新获批的下一轮中，可将单次 WinUI Composition 背景采样/blur/mask 与 WPF Visual Layer 作为有界候选，按预先定义的停止条件验证。不得在未获得新桌面测试授权时启动新捕获或交互。
 
 ## 11. 主要证据路径
 
@@ -176,9 +176,15 @@ WPF 默认透明路由证据较强，但其独占全屏窗口虽保持 DXGI excl
 
 本轮证据：`D:\MacOS\GlassDock-Win\.local\evidence\m0-final\20261023T111923Z-94bc33e6\`；进程与恢复状态：`D:\MacOS\GlassDock-Win\.local\evidence\interactive-tests\4b4d59d507ca4aa1be00685e3f38d75a\post-state.json`。私人/完整桌面图未提交 Git。
 
-**最终结论：NO-GO；M0 不进入 M1，技术路线不冻结。** Composition 在独立窗口的 blur 能力有正面证据，但当前目标 Dock HWND 没有真实模糊；非激活焦点行为也未产生有效观测结果。当前必要的最小后续动作是：修正后的 harness 通过静态检查后，在新的单独授权下，仅对目标 Dock HWND 做一次 window-level/system-backdrop 实验并确认非激活窗口可见 HWND；仍无 blur 或无法保焦点则停止当前路线，再评估 WPF Visual Layer 与原生后端。不得追加视觉矩阵。
+**本报告形成时的结论：NO-GO；M0 技术门未通过，不能冻结路线或开始依赖路线的生产实现。** Composition 在独立窗口的 blur 能力有正面证据，但当前目标 Dock HWND 没有真实模糊；非激活焦点行为也未产生有效观测结果。后续独立变更允许 M1 规格研究并行，不改变这些证据。当前拟申请的最小桌面闭环见 [待授权申请](minimum-desktop-test-application.md)，包括窗口级背板、非激活焦点和受控 DXGI 对照；它尚未运行。不得追加视觉矩阵。
 
 本轮本地 Release solution build（11 项目、0 warning/error）和 Core 单测（18/18）在桌面实验前通过；21 个 PowerShell 脚本静态解析无错误。最终收尾提交 `c8b11d170673fdf7b2ea7f7b3b470344f46e75b2` 已推送，精确 Windows CI run `39946556825` Build/Test 均成功；该 CI 不替代桌面实测。LICENSE 未改，未创建 Release，未改写历史。
+
+## 后续并行工作与静态修复补记（2026-10-23）
+
+之后负责人明确批准 M1 规格研究与 M0 技术收尾并行；本报告的历史 NO-GO 不变。新增的 [M0/M1 依赖调整记录](M0-M1-parallel-work-change-2026-10-23.md) 和 [M1 规格草案](../M1/implementation-taskbook.md) 列出可并行范围。当前默认项目目录、46 项矩阵、行为草案、来源、权限登记和设计 token 档案均为草案；7 个 REF 样本均缺 Mac 实机证据。
+
+进程环境变量恢复缺陷已完成静态修正。PowerShell 静态回归与安全范围 `PlanOnly` 均通过，详见 [脚本静态复核](script-static-review-2026-10-23.md)，日志位于 `D:\MacOS\GlassDock-Win\.local\evidence\m0-final-close-20261023\`，包括 `interactive-safety-static.log`、`minimal-desktop-test-plan.txt`、`release-build-final.log`、`release-tests-final.log` 和 `m1-spec-integrity-validation.log`。当前候选 Release 构建 11 个项目、0 警告/错误；Core 单测 18/18 通过。测试申请中的 WGC、非激活及 DXGI 观察没有运行。当前提交及精确 SHA 的远程 CI 将在本次提交后单独补记。
 
 # 历史报告说明
 

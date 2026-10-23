@@ -64,13 +64,11 @@ $script:M0InteractiveTestEnvironmentNames = @(
     'GLASSDOCK_M0_TEST_ALLOW_HIDE',
     'GLASSDOCK_POC_ITEM_COUNT',
     'GLASSDOCK_POC_ICON_SIZE',
-    'GLASSDOCK_POC_STATE_ROOT',
     'GLASSDOCK_M0_TEST_ROUNDED_REGION',
     'GLASSDOCK_M0_VISUAL_CANDIDATE',
     'GLASSDOCK_M0_COMPOSITION_PROBE_MODE',
     'GLASSDOCK_M0_COMPOSITION_STATUS_ROOT',
-    'GLASSDOCK_M0_NONACTIVATING_START',
-    'GLASSDOCK_M0_INPUT_TRACE'
+    'GLASSDOCK_M0_NONACTIVATING_START'
 )
 
 function Confirm-M0InteractiveTest {
@@ -427,7 +425,13 @@ function Restore-M0InteractiveTestEnvironment {
     param([Parameter(Mandatory)]$Session)
 
     foreach ($name in $script:M0InteractiveTestEnvironmentNames) {
-        [Environment]::SetEnvironmentVariable($name, $Session.EnvironmentBefore[$name], 'Process')
+        $value = $Session.EnvironmentBefore[$name]
+        if ($null -eq $value) {
+            Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
+        }
+        else {
+            [Environment]::SetEnvironmentVariable($name, [string]$value, 'Process')
+        }
     }
 }
 
@@ -479,10 +483,11 @@ function Stop-M0InteractiveTestSession {
     }
 
     foreach ($name in $script:M0InteractiveTestEnvironmentNames) {
-        $expected = [string]$Session.EnvironmentBefore[$name]
-        $actual = [string][Environment]::GetEnvironmentVariable($name, 'Process')
-        $passed = $actual -ceq $expected
-        Add-M0InteractiveRestorationCheck $Session "Environment restored: $name" $passed "Expected=[$expected]; actual=[$actual]"
+        $expected = $Session.EnvironmentBefore[$name]
+        $actual = [Environment]::GetEnvironmentVariable($name, 'Process')
+        $passed = if ($null -eq $expected) { $null -eq $actual } else { $actual -ceq [string]$expected }
+        Add-M0InteractiveRestorationCheck $Session "Environment restored: $name" $passed `
+            "Expected=[$expected]; actual=[$actual]; expectedWasUnset=$($null -eq $expected); actualIsUnset=$($null -eq $actual)"
     }
 
     $originalHwnd = [IntPtr][long]$Session.PreviousDesktopState.Foreground.Hwnd

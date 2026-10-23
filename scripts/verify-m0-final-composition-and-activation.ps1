@@ -10,7 +10,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
 . (Join-Path $PSScriptRoot 'interactive-test-safety.ps1')
 
-$script:RequiredPhrase = 'RUN M0 FINAL DESKTOP TEST'
+$script:RequiredPhrase = 'RUN M0 MINIMAL DESKTOP TEST'
 $script:WatchdogExe = Join-Path $script:RepoRoot 'spikes\GlassDock.M0.InputProbe\bin\Release\net10.0-windows10.0.19041.0\win-x64\GlassDock.M0.InputProbe.exe'
 $script:WinUiExe = Join-Path $script:RepoRoot 'spikes\GlassDock.PoC.WinUI\bin\Release\net10.0-windows10.0.26100.0\win-x64\GlassDock.PoC.WinUI.exe'
 $script:WpfExe = Join-Path $script:RepoRoot 'spikes\GlassDock.PoC.Wpf\bin\Release\net10.0-windows10.0.19041.0\GlassDock.PoC.Wpf.exe'
@@ -36,7 +36,7 @@ function Set-M0ProbeEnvironment {
     else { Remove-Item Env:GLASSDOCK_M0_VISUAL_CANDIDATE -ErrorAction SilentlyContinue }
     if ($NonActivating) { $env:GLASSDOCK_M0_NONACTIVATING_START = '1' }
     else { Remove-Item Env:GLASSDOCK_M0_NONACTIVATING_START -ErrorAction SilentlyContinue }
-    if ($CompositionMode -eq 'dock') { $env:GLASSDOCK_M0_TEST_ROUNDED_REGION = '1' }
+    if ($CompositionMode -eq 'dock' -and $VisualCandidate -eq 'winui-composition-backdrop-blur') { $env:GLASSDOCK_M0_TEST_ROUNDED_REGION = '1' }
     else { Remove-Item Env:GLASSDOCK_M0_TEST_ROUNDED_REGION -ErrorAction SilentlyContinue }
 }
 
@@ -79,7 +79,37 @@ function Invoke-M0CompositionCapture {
         -VisualCandidate $VisualCandidate -NonActivating:$NonActivating
     $app = Start-M0OwnedTestProcess -Session $Session -FilePath $script:WinUiExe -WorkingDirectory (Split-Path -Parent $script:WinUiExe)
     $windowStatus = Wait-M0Json -Session $Session -Path $ReadyFile -Process $app
-    $brushStatus = Wait-M0Json -Session $Session -Path $CompositionStatusFile -Process $app
+    $backgroundStatus = Wait-M0Json -Session $Session `
+        -Path (Join-Path $StatusRoot 'controlled-background-window.json') -Process $app
+    $brushStatus = if ($VisualCandidate -eq 'winui-composition-backdrop-blur') {
+        Wait-M0Json -Session $Session -Path $CompositionStatusFile -Process $app
+    } else { $null }
+    if ($VisualCandidate -eq 'winui-window-system-acrylic') {
+        $dockBounds = $windowStatus.BoundsPx
+        $backgroundBounds = $backgroundStatus.BoundsPx
+        $dockHwndText = ([string]$windowStatus.Hwnd).ToUpperInvariant()
+        $backgroundHwndText = ([string]$backgroundStatus.Hwnd).ToUpperInvariant()
+        $dockWidth = [int]$dockBounds.Right - [int]$dockBounds.Left
+        $dockHeight = [int]$dockBounds.Bottom - [int]$dockBounds.Top
+        $overlapWidth = [Math]::Max(0, [Math]::Min([int]$dockBounds.Right, [int]$backgroundBounds.X + [int]$backgroundBounds.Width) - [Math]::Max([int]$dockBounds.Left, [int]$backgroundBounds.X))
+        $overlapHeight = [Math]::Max(0, [Math]::Min([int]$dockBounds.Bottom, [int]$backgroundBounds.Y + [int]$backgroundBounds.Height) - [Math]::Max([int]$dockBounds.Top, [int]$backgroundBounds.Y))
+        if ([string]$backgroundStatus.Role -ne 'controlled-background' -or
+            $dockHwndText -eq $backgroundHwndText -or
+            [int]$backgroundStatus.ProcessId -ne [int]$windowStatus.ProcessId -or
+            $dockWidth -le 0 -or $dockHeight -le 0 -or
+            ($overlapWidth * $overlapHeight) -ne ($dockWidth * $dockHeight)) {
+            throw 'The localized background and Dock were not confirmed as distinct, overlapping HWNDs in the same owned test process; no backdrop screenshot was taken.'
+        }
+        $windowStatus | Add-Member -NotePropertyName ControlledBackgroundWindow -NotePropertyValue ([ordered]@{
+            Hwnd = $backgroundStatus.Hwnd
+            ProcessId = $backgroundStatus.ProcessId
+            BoundsPx = $backgroundStatus.BoundsPx
+            IsDistinctHwnd = $true
+            SameOwnedProcess = $true
+            FullyCoversDockHwnd = $true
+            Note = 'Separate HWND in the same test process; WGC visual capture remains the evidence for external sampling.'
+        }) -Force
+    }
     Start-Sleep -Milliseconds 600
 
     if ($Mode -eq 'control') {
@@ -94,7 +124,16 @@ function Invoke-M0CompositionCapture {
             [string]([int]$blurBounds.Height + 320),
             $CaptureFile)
     } else {
-        $captureArguments = @('capture-monitor-region', [string]$windowStatus.Hwnd, $CaptureFile)
+        $bounds = $windowStatus.BoundsPx
+        if (-not $bounds -or [int]$bounds.Right -le [int]$bounds.Left -or [int]$bounds.Bottom -le [int]$bounds.Top) {
+            throw 'The project Dock did not report valid HWND bounds for the localized WGC crop.'
+        }
+        $captureArguments = @('capture-monitor-crop',
+            [string]([int]$bounds.Left - 160),
+            [string]([int]$bounds.Top - 160),
+            [string]([int]$bounds.Right - [int]$bounds.Left + 320),
+            [string]([int]$bounds.Bottom - [int]$bounds.Top + 320),
+            $CaptureFile)
     }
     $capture = Start-M0OwnedTestProcess -Session $Session -FilePath $script:WgcExe `
         -WorkingDirectory (Split-Path -Parent $script:WgcExe) -ArgumentList $captureArguments
@@ -108,11 +147,11 @@ function Invoke-M0CompositionCapture {
 
     $imageResult = [ordered]@{
         Role = $Role
-        Candidate = if ($Mode -eq 'control') { 'Independent WinUI Composition control window' } else { 'WinUI project Dock window' }
+        Candidate = if ($Mode -eq 'control') { 'Independent WinUI Composition control window' } else { $VisualCandidate }
         Mode = $Mode
         Edge = if ($Mode -eq 'dock') { 'Bottom' } else { 'Not applicable: centered control surface' }
         IconSizeDip = if ($Mode -eq 'dock') { 58 } else { $null }
-        Pattern = 'Opaque black/white 20 DIP vertical stripes; test-owned topmost pattern surface; only rounded control or Dock region plus 160 physical-pixel margin persisted'
+        Pattern = 'Opaque black/white 20 DIP vertical stripes in a test-owned localized bottom-center window; Dock crop plus 160 physical-pixel margin persisted'
         WindowStatus = $windowStatus
         CompositionStatus = $brushStatus
         CapturePath = $CaptureFile
@@ -139,19 +178,22 @@ function Get-M0ForegroundRecord {
 
 if ($PlanOnly) {
     [pscustomobject]@{
-        Scope = 'One WinUI Composition visual positive-control capture, one WinUI project Dock capture at Bottom/58 DIP, then one non-activating startup check for WPF and WinUI.'
-        Background = 'A test-owned opaque full-monitor black/white stripe window masks normal desktop content; only the relevant region is persisted, on D:.'
+        Scope = 'One WinUI Window.SystemBackdrop Desktop Acrylic cross-window blur capture at Bottom/58 DIP; one WPF/WinUI non-activating startup comparison; then one no-capture DXGI exclusive-state comparison using the current display mode, 3 seconds per candidate.'
+        Background = 'A test-owned opaque black/white stripe window covers a localized bottom-center area (maximum 1000x400 DIP); only the Dock crop plus 160 physical-pixel margin is persisted, on D:.'
         InputInjection = $false
-        DisplaySettingsChanged = $false
+        DisplayModeChangeRequested = $false
+        DxgiExclusiveSurfaceShown = $true
+        DxgiCapture = $false
         ElevationRequested = $false
-        Fullscreen = $false
-        CaptureCount = 2
+        Fullscreen = 'A test-owned DXGI exclusive window is shown for up to 3 seconds per WPF/WinUI candidate at the exact current mode; no game is launched.'
+        CaptureCount = 1
         TotalWatchdogLimitSeconds = $TimeoutSeconds
-        FullscreenCompanion = 'scripts/verify-poc-exclusive-fullscreen.ps1: current mode only; two 3-second DXGI probe windows; -SkipCapture; separate 300-second watchdog; combined work group maximum 600 seconds'
+        DxgiWatchdogLimitSeconds = 120
+        DxgiStateComparison = 'Included once for WPF and WinUI using verify-poc-exclusive-fullscreen.ps1 -NonActivatingDockStart -SkipCapture -FullscreenSeconds 3; existing mode is queried and restored only if it differs afterward.'
         RequiredPhrase = $script:RequiredPhrase
         EmergencyStop = 'Ctrl+Shift+F12'
-        EvidenceRoot = (Join-Path $script:LocalRoot 'evidence\m0-final')
-        DoesNotInclude = @('mouse/keyboard injection', 'DPI/resolution/refresh changes', 'exclusive fullscreen', 'taskbar settings changes')
+        EvidenceRoot = (Join-Path $script:LocalRoot 'evidence\m0-minimal-final')
+        DoesNotInclude = @('mouse/keyboard injection', 'DPI/resolution/refresh mode selection', 'real game testing', 'taskbar settings changes', 'WGC capture during DXGI exclusive state')
     } | Format-List
     return
 }
@@ -161,35 +203,27 @@ foreach ($exe in @($script:WatchdogExe, $script:WinUiExe, $script:WpfExe, $scrip
 }
 Confirm-M0InteractiveTest -Confirmed:$ConfirmInteractiveTest -AuthorizationPhrase $AuthorizationPhrase `
     -RequiredPhrase $script:RequiredPhrase `
-    -Purpose 'briefly show two controlled WGC visual surfaces, then show the WPF and WinUI Dock startup candidates while recording foreground ownership'
-if (-not $PSCmdlet.ShouldProcess('Current desktop', 'Run one bounded Composition visual control/Dock comparison and two non-activating startup observations')) { return }
+    -Purpose 'briefly show one localized controlled background and WinUI Dock for a single window-level backdrop capture, then show WPF and WinUI non-activating startup candidates while recording foreground ownership'
+if (-not $PSCmdlet.ShouldProcess('Current desktop', 'Run one bounded WinUI cross-window backdrop capture and one non-activating startup comparison')) { return }
 
 $runId = [DateTimeOffset]::UtcNow.ToString('yyyyMMddTHHmmssZ') + '-' + [Guid]::NewGuid().ToString('N').Substring(0, 8)
-$runRoot = Join-Path $script:LocalRoot "evidence\m0-final\$runId"
+$runRoot = Join-Path $script:LocalRoot "evidence\m0-minimal-final\$runId"
 New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
 $session = Start-M0InteractiveTestSession -RepoRoot $script:RepoRoot -LocalRoot $script:LocalRoot `
-    -Purpose 'M0 final bounded Composition blur and non-activating startup check' `
+    -Purpose 'M0 minimal window-level backdrop and non-activating startup comparison' `
     -WatchdogExe $script:WatchdogExe -TimeoutSeconds $TimeoutSeconds
 $results = [System.Collections.Generic.List[object]]::new()
 $completed = $false
 try {
     Assert-M0InteractiveTestCanContinue $session
-    $controlRoot = Join-Path $runRoot 'composition-control'
-    New-Item -ItemType Directory -Force -Path $controlRoot | Out-Null
-    $results.Add((Invoke-M0CompositionCapture -Session $session -Role 'independent-control' -Mode 'control' `
-        -StateRoot (Join-Path $controlRoot 'state') -StatusRoot $controlRoot `
-        -ReadyFile (Join-Path $controlRoot 'independent-control-window.json') `
-        -CaptureFile (Join-Path $controlRoot 'independent-control.png') `
-        -CompositionStatusFile (Join-Path $controlRoot 'composition-brush-status.json')))
-
     Assert-M0InteractiveTestCanContinue $session
-    $dockRoot = Join-Path $runRoot 'project-dock'
+    $dockRoot = Join-Path $runRoot 'project-dock-window-system-acrylic'
     New-Item -ItemType Directory -Force -Path $dockRoot | Out-Null
     $stateRoot = Join-Path $dockRoot 'state'
     New-Item -ItemType Directory -Force -Path $stateRoot | Out-Null
     [IO.File]::WriteAllText((Join-Path $stateRoot 'winui-poc-settings.json'), '{"Edge":"Bottom"}', [Text.UTF8Encoding]::new($false))
     $results.Add((Invoke-M0CompositionCapture -Session $session -Role 'project-dock' -Mode 'dock' `
-        -VisualCandidate 'winui-composition-backdrop-blur' -StateRoot $stateRoot -StatusRoot $dockRoot `
+        -VisualCandidate 'winui-window-system-acrylic' -StateRoot $stateRoot -StatusRoot $dockRoot `
         -ReadyFile (Join-Path $dockRoot 'project-dock-window.json') `
         -CaptureFile (Join-Path $dockRoot 'project-dock.png') `
         -CompositionStatusFile (Join-Path $dockRoot 'composition-brush-status.json')))
@@ -256,6 +290,9 @@ try {
             DockProcessId = $app.Id
             DockHwnd = "0x$($windowHandle.ToInt64().ToString('X'))"
             DockWindowVisible = [GlassDockM0SafetyNative]::IsWindowVisible($windowHandle)
+            HwndDiscovery = 'EnumWindows; match GetWindowThreadProcessId to the run-owned process; require IsWindowVisible'
+            ForegroundObservationDelayMilliseconds = 900
+            ForegroundUnchanged = ([long]$after.Hwnd -eq [long]$before.Hwnd -and [uint32]$after.ProcessId -eq [uint32]$before.ProcessId)
             InputInteractionRetested = $false
             InputEvidenceReference = 'Prior M0-07 center-area event-recipient tests; this startup experiment does not inject pointer or keyboard input.'
         }
@@ -270,13 +307,35 @@ try {
         if ([long]$restoredHwnd -ne [long]$originalHwnd) { throw "Could not restore the original foreground window after $($candidate.Name) test." }
     }
 
+    Assert-M0InteractiveTestCanContinue $session
+    Restore-M0InteractiveTestEnvironment -Session $session
+    $fullscreenScript = Join-Path $PSScriptRoot 'verify-poc-exclusive-fullscreen.ps1'
+    $dxgiOutput = @(& $fullscreenScript -ConfirmInteractiveTest -NonActivatingDockStart -SkipCapture `
+        -AuthorizationPhrase $script:RequiredPhrase -Candidates @('Wpf', 'WinUI') `
+        -FullscreenSeconds 3 -TimeoutSeconds 120 -Confirm:$false)
+    Assert-M0InteractiveTestCanContinue $session
+    $dxgiEvidenceLine = @($dxgiOutput | ForEach-Object { [string]$_ } | Where-Object { $_ -match '^Evidence: ' -or $_ -match '^Preflight blocked;.*Evidence: ' } | Select-Object -Last 1)
+    $dxgiEvidencePath = if ($dxgiEvidenceLine.Count -gt 0) { ($dxgiEvidenceLine[0] -replace '^.*Evidence: ', '').Trim() } else { $null }
+    $dxgiSummary = if ($dxgiEvidencePath -and (Test-Path -LiteralPath $dxgiEvidencePath -PathType Leaf)) {
+        Get-Content -LiteralPath $dxgiEvidencePath -Raw | ConvertFrom-Json
+    } else { $null }
+    $results.Add([pscustomobject]@{
+        Scenario = 'Non-activating Dock launch during controlled DXGI exclusive state'
+        Status = if ($dxgiSummary) { $dxgiSummary.Status } else { 'BLOCKED' }
+        EvidencePath = $dxgiEvidencePath
+        CandidateResults = if ($dxgiSummary) { @($dxgiSummary.Tests) } else { @() }
+        ChildOutput = @($dxgiOutput | ForEach-Object { [string]$_ })
+        ScreenshotCaptured = $false
+        GameLaunched = $false
+    })
+
     $completed = $true
     [IO.File]::WriteAllText((Join-Path $runRoot 'final-desktop-results.json'),
         ([ordered]@{
             RunId=$runId
             StartedAtUtc=$session.PreviousDesktopState.CapturedAtUtc
             CompletedAtUtc=[DateTimeOffset]::UtcNow.ToString('O')
-            Scope='one independent WinUI Composition blur control, one project WinUI Dock capture (Bottom/58 DIP), and WPF/WinUI non-activating startup observations'
+            Scope='one project WinUI Window.SystemBackdrop Desktop Acrylic capture (Bottom/58 DIP); WPF/WinUI non-activating startup observations; and one existing-mode, no-capture DXGI exclusive-state comparison for WPF/WinUI (3 seconds each)'
             Results=@($results)
             FullMonitorFramesPersisted=$false
             OnlyControlledWgcRegionsPersisted=$true

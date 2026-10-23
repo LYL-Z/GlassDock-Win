@@ -40,8 +40,14 @@ internal sealed class CompositionBackdropBlurBrush(float blurAmountDip, string p
                 Status = "EffectBrushCreated",
                 Stage = "Complete",
                 Source = "Microsoft.UI.Composition.CompositionBackdropBrush",
+                SourceFactory = "Compositor.CreateBackdropBrush()",
+                SamplingScope = "Composition backdrop; Microsoft documents application content or pixels behind a desktop app window. Visual capture is required to establish which source was actually sampled.",
                 Effect = "Microsoft.Graphics.Canvas.Effects.GaussianBlurEffect",
                 BlurAmountDip = blurAmountDip,
+                EffectTarget = "XamlCompositionBrushBase applied as XAML UIElement.Background",
+                FallbackColor = "#FFFF00FF",
+                FallbackActivated = false,
+                VisualSamplingResult = "NOT_MEASURED_BY_BRUSH_CREATION",
                 HResult = "0x00000000"
             });
         }
@@ -55,8 +61,14 @@ internal sealed class CompositionBackdropBlurBrush(float blurAmountDip, string p
                 Status = "Failed",
                 Stage = stage,
                 Source = "Microsoft.UI.Composition.CompositionBackdropBrush",
+                SourceFactory = "Compositor.CreateBackdropBrush()",
+                SamplingScope = "Composition backdrop; Microsoft documents application content or pixels behind a desktop app window. Visual capture is required to establish which source was actually sampled.",
                 Effect = "Microsoft.Graphics.Canvas.Effects.GaussianBlurEffect",
                 BlurAmountDip = blurAmountDip,
+                EffectTarget = "XamlCompositionBrushBase applied as XAML UIElement.Background",
+                FallbackColor = "#FFFF00FF",
+                FallbackActivated = true,
+                VisualSamplingResult = "NOT_MEASURED_BY_BRUSH_CREATION",
                 HResult = $"0x{exception.HResult:X8}",
                 ExceptionType = exception.GetType().FullName,
                 Exception = exception.ToString()

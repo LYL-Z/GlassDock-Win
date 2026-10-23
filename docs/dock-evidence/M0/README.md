@@ -1,8 +1,19 @@
 # M0 evidence
 
-**验收状态：M0 BLOCKED；M1 不开始；生产 UI 框架不冻结。**
+**验收状态：M0 NO-GO；生产 UI 框架不冻结。** 独立的 M1 官方资料和产品规格研究已按 [阶段依赖调整记录](M0-M1-parallel-work-change-2026-10-23.md) 启动，但规格仍是草案，M1 未验收，生产渲染器未启动。
 
 - [M0 执行与缺口补测报告](M0-report.md)
+- [M0 最后阻断项与停止条件](M0-remaining-blockers-and-stop-criteria.md)
+- [最小桌面测试申请（待授权）](minimum-desktop-test-application.md)
+- [M0/M1 并行工作线变更](M0-M1-parallel-work-change-2026-10-23.md)
+- [M1 初步规格矩阵（46 项草案）](../M1/spec-matrix.csv)
+- [M1 官方资料初读](../M1/official-reference-notes-2026-10-23.md)
+- [M1 行为规格草案](../M1/behavior-specification-draft.md)
+- [M1 参考基线与 REF 样本登记](../M1/reference-baseline.md)
+- [M1 46 项功能可行性分层](../M1/feasibility-and-requirements.md)
+- [M1 素材权利与参考样本台账](../M1/rights-and-reference-ledger.md)
+- [M1 设计参数草案（未测值为 null）](../M1/design-tokens.json)
+- [技术架构风险登记](../M1/architecture-risk-register.md)
 - [逐项需求验收矩阵](REQ-matrix.md)
 - [技术路线复评](../../tech-spike-comparison.md)
 - [UI 栈 ADR](../../adr/0001-ui-rendering-stack.md)

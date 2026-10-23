@@ -18,7 +18,7 @@
 1. 不接受当前 `XamlCompositionBrushBase` Dock 背景集成为主渲染实现。
 2. 不冻结 WPF 或 WinUI 3。WPF 保留为输入路径对照；WinUI 3 + Windows App SDK Composition 保留为候选，但尚未证明目标 Dock HWND 的真实桌面背景 blur。
 3. 不启动原生 Win32 + DirectComposition PoC。当前尚未验证目标窗口级系统 backdrop 接口；原生后端的实现和维护成本更高。
-4. 当前阶段结果为 **NO-GO：不进入 M1**。阻断原因是目标 Dock HWND 的 blur 证据失败，以及非激活启动观察和非激活 DXGI 状态没有有效结果。
+4. M0 技术结果为 **NO-GO**，目标 Dock HWND 的 blur 证据失败，非激活启动观察和非激活 DXGI 状态没有有效结果。后续已单独批准 M1 规格研究并行推进，但不改变本 ADR 的技术阻断，也不允许生产 renderer 实现；见 [M0/M1 阶段依赖变更](../dock-evidence/M0/M0-M1-parallel-work-change-2026-10-23.md)。
 
 ## 后续唯一必要的视觉判别实验
 

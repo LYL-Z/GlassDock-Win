@@ -150,7 +150,7 @@ if($preflightExitCode -ne 0 -or -not($preflight -and $preflight.Status -eq 'PASS
 }
 
 Confirm-M0InteractiveTest -Confirmed:$ConfirmInteractiveTest -AuthorizationPhrase $AuthorizationPhrase `
-    -RequiredPhrase 'RUN M0 FINAL DESKTOP TEST' `
+    -RequiredPhrase 'RUN M0 MINIMAL DESKTOP TEST' `
     -Purpose "enter DXGI exclusive fullscreen at the existing $($originalMode.PelsWidth)x$($originalMode.PelsHeight)@$($originalMode.DisplayFrequency)Hz mode, briefly launch each selected Dock PoC without activation, then release fullscreen; no mode-setting API is intended; test-owned processes only; Escape or Ctrl+Shift+F12 stops the run"
 if(-not $PSCmdlet.ShouldProcess('Current desktop','Show a controlled DXGI exclusive fullscreen surface for at most 8 seconds per candidate and launch the selected Dock PoC')){return}
 

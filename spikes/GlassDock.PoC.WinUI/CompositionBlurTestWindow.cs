@@ -41,10 +41,20 @@ internal sealed class CompositionBlurTestWindow : Window
         var display = DisplayArea.GetFromWindowId(_appWindow.Id, DisplayAreaFallback.Primary);
         var bounds = display.OuterBounds;
         var scale = GetDpiForWindow(_hwnd) / 96.0;
-        var widthDip = bounds.Width / scale;
-        var heightDip = bounds.Height / scale;
-        _appWindow.Resize(new SizeInt32(bounds.Width, bounds.Height));
-        _appWindow.Move(new PointInt32(bounds.X, bounds.Y));
+        var monitorWidthDip = bounds.Width / scale;
+        var monitorHeightDip = bounds.Height / scale;
+        var localizedBackground = string.Equals(_role, "controlled-background", StringComparison.Ordinal);
+        var widthDip = localizedBackground ? Math.Min(1000, monitorWidthDip) : monitorWidthDip;
+        var heightDip = localizedBackground ? Math.Min(400, monitorHeightDip) : monitorHeightDip;
+        var widthPx = (int)Math.Round(widthDip * scale);
+        var heightPx = (int)Math.Round(heightDip * scale);
+        var windowBounds = new RectInt32(
+            bounds.X + (bounds.Width - widthPx) / 2,
+            bounds.Y + bounds.Height - heightPx,
+            widthPx,
+            heightPx);
+        _appWindow.Resize(new SizeInt32(windowBounds.Width, windowBounds.Height));
+        _appWindow.Move(new PointInt32(windowBounds.X, windowBounds.Y));
         root.Width = widthDip;
         root.Height = heightDip;
 
@@ -58,18 +68,19 @@ internal sealed class CompositionBlurTestWindow : Window
             CapturedAtUtc = DateTimeOffset.UtcNow,
             Role = _role,
             Hwnd = $"0x{_hwnd.ToInt64():X}",
-            BoundsPx = new { bounds.X, bounds.Y, bounds.Width, bounds.Height },
+            BoundsPx = new { windowBounds.X, windowBounds.Y, windowBounds.Width, windowBounds.Height },
             Dpi = GetDpiForWindow(_hwnd),
             UsesLayeredWindow = false,
             AlwaysOnTop = true,
             HasIndependentDesktopWindowHost = true,
             IncludesBlurControl = includeBlurSurface,
+            BackgroundCoverage = localizedBackground ? "Localized 1000x400 DIP maximum region at the bottom center; not full-screen" : "Monitor bounds",
             BlurControlBoundsPx = blurBoundsPx,
             Pattern = "Alternating 20 DIP black/white vertical stripes"
         }, $"{_role}-window.json");
 
         DockLogger.Info($"Composition probe window ready; role={_role}; hwnd=0x{_hwnd.ToInt64():X}; " +
-                        $"bounds={bounds.X},{bounds.Y},{bounds.Width},{bounds.Height}; dpi={GetDpiForWindow(_hwnd)}; " +
+                        $"bounds={windowBounds.X},{windowBounds.Y},{windowBounds.Width},{windowBounds.Height}; dpi={GetDpiForWindow(_hwnd)}; " +
                         $"layered=false; blurControl={includeBlurSurface}.");
     }
 

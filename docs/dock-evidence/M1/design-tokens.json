@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "status": "PROVISIONAL_NO_MAC_MEASUREMENTS",
+  "sourceRequirement": "Original taskbook requires measured values and explicit unverified/provisional flags.",
+  "macHardwareSample": "NOT TESTED",
+  "tokens": {
+    "dockThicknessDip": { "value": null, "status": "UNVERIFIED", "method": "Measure REF-01 at recorded DPI/scale" },
+    "iconSizeDip": { "value": null, "status": "UNVERIFIED", "method": "Measure REF-02; separate displayed bounds from transparent image padding" },
+    "itemSpacingDip": { "value": null, "status": "UNVERIFIED", "method": "Measure centers and visible icon bounds in REF-01/02" },
+    "dividerGeometryPx": { "value": null, "status": "UNVERIFIED", "method": "Measure both semantic separators in REF-01/02" },
+    "cornerRadiusPx": { "value": null, "status": "UNVERIFIED", "method": "Measure Dock silhouette over identical reference capture" },
+    "backdropBlurPx": { "value": null, "status": "UNVERIFIED", "method": "Image edge/spatial-frequency comparison against the same underlying scene" },
+    "backdropTint": { "value": null, "status": "UNVERIFIED", "method": "Sample matched light/dark backgrounds; do not infer from a solid fallback" },
+    "rimHighlight": { "value": null, "status": "UNVERIFIED", "method": "Compare edge luminance and color against unoccluded background" },
+    "shadowProfile": { "value": null, "status": "UNVERIFIED", "method": "Measure offset, spread, opacity and directional profile" },
+    "hoverMagnification": { "value": null, "status": "UNVERIFIED", "method": "Track icon bounds through REF-03 pointer trajectories" },
+    "hoverInfluenceRadius": { "value": null, "status": "UNVERIFIED", "method": "Measure neighbor displacement through REF-03" },
+    "launchBounceCurve": { "value": null, "status": "UNVERIFIED", "method": "Time-aligned frame sampling in REF-04" },
+    "tooltipDelayMs": { "value": null, "status": "UNVERIFIED", "method": "Time REF-07 pointer and keyboard navigation" },
+    "autoHideRevealDelayMs": { "value": null, "status": "UNVERIFIED", "method": "Time REF-06 edge approach/reveal" }
+  }
+}
