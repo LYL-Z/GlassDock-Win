@@ -1,6 +1,7 @@
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
     [switch]$ConfirmInteractiveTest,
+    [switch]$NonActivatingDockStart,
     [ValidateSet('Wpf','WinUI')][string[]]$Candidates = @('Wpf','WinUI'),
     [ValidateRange(3,30)][int]$FullscreenSeconds = 8,
     [ValidateRange(30,1800)][int]$TimeoutSeconds = 180
@@ -153,6 +154,7 @@ $session=Start-M0InteractiveTestSession -RepoRoot $script:RepoRoot -LocalRoot $s
 $results=[System.Collections.Generic.List[object]]::new()
 $completed=$false
 $oldStateRoot=$env:GLASSDOCK_POC_STATE_ROOT;$oldCount=$env:GLASSDOCK_POC_ITEM_COUNT;$oldSize=$env:GLASSDOCK_POC_ICON_SIZE
+$oldNonActivatingStart=$env:GLASSDOCK_M0_NONACTIVATING_START
 try{
     foreach($candidate in $Candidates){
         Assert-M0InteractiveTestCanContinue $session
@@ -184,11 +186,13 @@ try{
             $stateRoot=Join-Path $candidateRoot 'dock-state'
             New-Item -ItemType Directory -Force -Path $stateRoot|Out-Null
             $env:GLASSDOCK_POC_STATE_ROOT=$stateRoot;$env:GLASSDOCK_POC_ITEM_COUNT='8';$env:GLASSDOCK_POC_ICON_SIZE='58'
+            if($NonActivatingDockStart){$env:GLASSDOCK_M0_NONACTIVATING_START='1'}else{Remove-Item Env:GLASSDOCK_M0_NONACTIVATING_START -ErrorAction SilentlyContinue}
             try{$dock=Start-M0OwnedTestProcess -Session $session -FilePath $candidateInfo.Path -WorkingDirectory $candidateInfo.Project}
             finally{
                 if($null -eq $oldStateRoot){Remove-Item Env:GLASSDOCK_POC_STATE_ROOT -ErrorAction SilentlyContinue}else{$env:GLASSDOCK_POC_STATE_ROOT=$oldStateRoot}
                 if($null -eq $oldCount){Remove-Item Env:GLASSDOCK_POC_ITEM_COUNT -ErrorAction SilentlyContinue}else{$env:GLASSDOCK_POC_ITEM_COUNT=$oldCount}
                 if($null -eq $oldSize){Remove-Item Env:GLASSDOCK_POC_ICON_SIZE -ErrorAction SilentlyContinue}else{$env:GLASSDOCK_POC_ICON_SIZE=$oldSize}
+                if($null -eq $oldNonActivatingStart){Remove-Item Env:GLASSDOCK_M0_NONACTIVATING_START -ErrorAction SilentlyContinue}else{$env:GLASSDOCK_M0_NONACTIVATING_START=$oldNonActivatingStart}
             }
             for($i=0;$i -lt 50;$i++){
                 Assert-M0InteractiveTestCanContinue $session
@@ -228,13 +232,19 @@ try{
             Start-Sleep -Milliseconds 250
             $entryStatus=Read-M0ProbeStatus $statusPath
             $afterDockSamples.Add([pscustomobject]@{AtUtc=[DateTimeOffset]::UtcNow;Fullscreen=$entryStatus.Fullscreen;Phase=$entryStatus.Phase;CurrentMode=$entryStatus.CurrentMode;DockVisible=$dockVisible;DockTopmost=$dockTopmost;DockCenterHitProcess=$pointHitPid;DockProcessId=$dock.Id;ForegroundProcessId=(Get-M0ForegroundProcessId);TaskbarVisible=$taskbarVisible})
+            $focusStolenBeforeCapture = $afterDockSamples[0].ForegroundProcessId -eq $dock.Id
+            $exclusiveLostBeforeCapture = -not $afterDockSamples[0].Fullscreen
+            $exclusiveChangedDuringCapture = $afterDockSamples[0].Fullscreen -and -not $afterDockSamples[1].Fullscreen
+            $coexistenceStatus = if ($focusStolenBeforeCapture -or $exclusiveLostBeforeCapture) { 'FAIL' } else { 'BLOCKED' }
             $results.Add([pscustomobject]@{
-                Candidate=$candidate;Scenario='DXGI-exclusive-with-Dock-launch';ProbeProcessId=$probe.Id;DockProcessId=$dock.Id
-                EntryConfirmed=$true;EntryStatus='PASS';CoexistenceStatus='BLOCKED';ExclusiveStateAfterDock=$entryStatus.Fullscreen;ProbePhaseAfterDock=$entryStatus.Phase
+                Candidate=$candidate;Scenario='DXGI-exclusive-with-Dock-launch';StartupMode=if($NonActivatingDockStart){'NonActivatingCandidate'}else{'Default'};ProbeProcessId=$probe.Id;DockProcessId=$dock.Id
+                EntryConfirmed=$true;EntryStatus='PASS';CoexistenceStatus=$coexistenceStatus;FocusStolenBeforeCapture=$focusStolenBeforeCapture
+                ExclusiveLostBeforeCapture=$exclusiveLostBeforeCapture;ExclusiveChangedDuringCapture=$exclusiveChangedDuringCapture
+                ExclusiveStateAfterDock=$entryStatus.Fullscreen;ProbePhaseAfterDock=$entryStatus.Phase
                 DockVisible=$dockVisible;DockTopmost=$dockTopmost;DockCenterPoint=if($dockRectOk){"$dockCenterX,$dockCenterY"}else{''};DockCenterHitProcess=$pointHitPid
                 ForegroundProcessIdAfterDock=$foregroundPid;TaskbarVisible=$taskbarVisible;CaptureStatus=$captureStatus;CapturePath=if($captureStatus -eq 'PASS'){$capturePath}else{$null};CaptureError=$captureError;Samples=@($afterDockSamples)
-                Status='BLOCKED'
-                StatusLimit='WGC monitor capture and DXGI state samples are separate signals. WPF remained DXGI-fullscreen before and after capture, yet its Dock was absent from the saved frame while WindowFromPoint resolved the Dock HWND; visible rendering and input routing therefore remain unresolved. WinUI had already left DXGI fullscreen after Dock launch and was visible in the saved composed frame. Capture metadata and adjacent state samples must be read together. This controlled app is not a game compatibility matrix.'
+                Status=$coexistenceStatus
+                StatusLimit='Dock invisibility is allowed while true DXGI exclusive fullscreen remains active. The test records foreground PID and exclusive state before and after WGC capture: foreground becoming the Dock process or exclusive loss before capture is a FAIL; an exclusive transition only during capture is attributed as capture-confounded and remains BLOCKED. This probe does not test game input interception or automatic restoration after fullscreen exit, and it is not a game compatibility matrix.'
             })
         }
         catch{
@@ -260,6 +270,7 @@ finally{
     if($null -eq $oldStateRoot){Remove-Item Env:GLASSDOCK_POC_STATE_ROOT -ErrorAction SilentlyContinue}else{$env:GLASSDOCK_POC_STATE_ROOT=$oldStateRoot}
     if($null -eq $oldCount){Remove-Item Env:GLASSDOCK_POC_ITEM_COUNT -ErrorAction SilentlyContinue}else{$env:GLASSDOCK_POC_ITEM_COUNT=$oldCount}
     if($null -eq $oldSize){Remove-Item Env:GLASSDOCK_POC_ICON_SIZE -ErrorAction SilentlyContinue}else{$env:GLASSDOCK_POC_ICON_SIZE=$oldSize}
+    if($null -eq $oldNonActivatingStart){Remove-Item Env:GLASSDOCK_M0_NONACTIVATING_START -ErrorAction SilentlyContinue}else{$env:GLASSDOCK_M0_NONACTIVATING_START=$oldNonActivatingStart}
     $modeRestore=Restore-M0DisplayModeIfNeeded -OriginalMode $originalMode -DeviceName $deviceName
     $displayAfterPath=Join-Path $runRoot 'display-after.json'
     & (Join-Path $PSScriptRoot 'inspect-display-modes.ps1') -DeviceName $deviceName -OutputPath $displayAfterPath|Out-Null

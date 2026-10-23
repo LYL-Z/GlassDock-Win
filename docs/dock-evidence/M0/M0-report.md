@@ -1,10 +1,11 @@
 # M0 缺口补测与验收报告
 
-- 更新日期：2026-10-22（测试记录使用 UTC 文件夹名，部分时间显示为 2026-10-23 UTC）
+- 更新日期：2026-10-23（测试记录使用 UTC 文件夹名）
 - 仓库：`D:\MacOS\GlassDock-Win`
 - 当前结论：**M0 未通过；不进入 M1；不冻结 WPF、WinUI 3 或 Win32 + DirectComposition。**
 - M0 验证代码、脚本与证据交付提交：`8be36ea111e35875dbc3ff8cab96474a36e6d413`；对应 Windows CI run `39896333410` 的 Build/Test 均成功。本报告和矩阵记录该精确提交的结果；M0 仍未通过整体验收。
 - 本次实际执行了已获批准的输入路由、WGC 视觉、窗口共存、显示刷新、托盘/配置恢复及 DXGI 独占全屏测试。未提权、未启动 M1、未改 LICENSE、未创建 Release。
+- 2026-10-23 本次续作只实施了默认关闭的系统材质/非激活启动候选、应用侧性能记录器、托盘命令路由单测及文档/脚本修订；没有启动任何窗口、输入、全屏或桌面捕获。新的候选尚无运行时视觉或共存证据。
 
 ## 1. 环境与证据边界
 
@@ -58,17 +59,18 @@ WinUI 候选实现调用公开 User32 `SetWindowRgn`，用公开 GDI `CreateRoun
 
 普通最大化及无边框全屏模拟场景共 4/4 PASS（WPF/WinUI × 两种窗口状态）。受控下层程序与 Dock 均收到各自的合成点击，Dock 中心命中解析到 Dock 进程，任务栏保持可见；这不是 Alt+Tab 测试，也不覆盖所有 Shell 面板。证据：`D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\coexistence\20261022T163228Z\coexistence-results.json`。
 
-独占全屏使用当前模式建立 DXGI swap chain，并确认 `SetFullscreenState(true)` / `IsFullScreen`。设备模式测试前后均为 3840×2400@240Hz，未改变分辨率、DPI 或刷新率；恢复校验通过。实际观察：
+独占全屏使用当前模式建立 DXGI swap chain，并确认 `SetFullscreenState(true)` / `IsFullScreen`。设备模式测试前后均为 3840×2400@240Hz，未改变分辨率、DPI 或刷新率；恢复校验通过。新的验收规则允许 Dock 在真正 DXGI 独占全屏期间不可见；可见性本身不作为失败。需要满足的是 Dock 不成为前台、不截获游戏输入、不造成独占状态退出，且退出全屏后自动恢复，无须关闭或重启 Dock。
 
-- WPF 启动后 DXGI 仍报告独占；Dock HWND 报告可见且置顶，`WindowFromPoint` 在 Dock 中心解析到 Dock 进程，但保存的 WGC 主屏帧中看不到 Dock。测试没有在该场景注入输入，因此“Dock 不可见时是否仍拦截游戏输入”未验证，列为 **BLOCKED**。
-- WinUI 3 Dock 启动后 DXGI 独占状态变为 false；WGC 组合帧里 Dock 可见，但外缘有浅色矩形宿主边框。该受控程序不是游戏，不能判定所有独占全屏应用行为，列为 **BLOCKED**。
+- WPF：DXGI 独占状态在两次取样中均保持 true；Dock HWND 显示且置顶，`WindowFromPoint` 只作命中诊断；WGC 主屏图像中看不到 Dock，这与允许隐藏的规则相容。但 `ForegroundProcessIdAfterDock` 等于 Dock PID `71032`，直接违反“启动 Dock 不抢焦点”的要求，故当前默认启动行为 **FAIL**。独占场景的真实鼠标输入未测试，窗口是否截获游戏输入仍 **BLOCKED**。
+- WinUI 3：两次取样中 DXGI 独占状态已是 false，前台 PID 等于 Dock PID `87388`。因此当前默认启动行为同时违反不抢焦点与不强制退出独占的要求，当前行为 **FAIL**。WinUI 的 `App.OnLaunched` 明确调用 `_window.Activate()`，公开文档说明该调用会尝试将窗口带到前台并取得输入焦点；但本次没有隔离激活与置顶/渲染宿主的因果作用，DXGI 独占退出的精确根因仍未确认。
+- 两候选在退出真实全屏后能否自动恢复、是否需要重新启动，以及 Dock 隐藏时的游戏输入投递均未测，继续 **BLOCKED**。受控 DXGI 程序不是游戏兼容矩阵。
 
-证据：`D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\fullscreen-exclusive\20261023T032605Z\exclusive-fullscreen-results.json`、[WPF 帧](D:/MacOS/GlassDock-Win/.local/evidence/m0-gap/fullscreen-exclusive/20261023T032605Z/Wpf/after-dock-monitor.png)、[WinUI 帧](D:/MacOS/GlassDock-Win/.local/evidence/m0-gap/fullscreen-exclusive/20261023T032605Z/WinUI/after-dock-monitor.png)。捕获帧不是面板 scanout；状态矛盾不能判为全屏共存通过。
+原始证据：`D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\fullscreen-exclusive\20261023T032605Z\exclusive-fullscreen-results.json`、[WPF 帧](D:/MacOS/GlassDock-Win/.local/evidence/m0-gap/fullscreen-exclusive/20261023T032605Z/Wpf/after-dock-monitor.png)、[WinUI 帧](D:/MacOS/GlassDock-Win/.local/evidence/m0-gap/fullscreen-exclusive/20261023T032605Z/WinUI/after-dock-monitor.png)。探针备注指出 WGC 捕获也可能改变独占状态；但 WinUI 的独占状态在取帧前后取样中都已退出。捕获帧不是面板 scanout。
 
 托盘与配置：
 
 - WPF 真实托盘图标右键菜单的 Show 和 Exit 均通过；测试确认先隐藏，再通过 Show 恢复，Exit 结束测试进程。
-- WinUI 3 托盘图标注册及右键弹出菜单窗口均确认；但菜单项无法通过 UI Automation、MSAA 或标准 `GetMenu` 读取，因此未猜坐标，Show/Exit **BLOCKED**。
+- WinUI 3 托盘图标注册及右键弹出菜单窗口均确认；原生 `HMENU` 建立了 `Show Dock` / `Exit GlassDock` 项，处理分支现由 Core `DockTrayCommandRouter` 承担，新增单测验证 Show、Exit、未知命令三种回调映射（3/3 PASS）。UIA/MSAA/`GetMenu` 无法定位是当前自动化工具对原生弹出菜单的读取限制，不能据此判定产品功能失败。真实菜单选择、键盘导航与辅助功能树仍 **NOT TESTED**，需后续交互授权。
 - 缺失、损坏 JSON、非法 Edge 配置在 WPF/WinUI 各自隔离状态根下共 6/6 PASS：进程存活、默认 Bottom 被持久化，损坏 JSON 写出错误日志。未触碰用户真实配置。
 
 证据目录：`D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\tray-config\`；配置矩阵 `20261023T030101Z`，WPF 托盘 `20261023T030531Z`，WinUI 菜单可访问性复核 `20261023T031135Z`。
@@ -81,15 +83,20 @@ WinUI 候选实现调用公开 User32 `SetWindowRgn`，用公开 GDI `CreateRoun
 
 这只是 DWM 全局合成时间，不归属到 Dock 进程，不是应用逻辑更新间隔、逐进程呈现提交间隔，也不是面板 scanout。WGC 目前保存单帧，不能从单帧计算帧间隔。PresentMon/ETW 仍因 `StartTrace` access denied 无有效逐进程 CSV；没有使用管理员权限或修改账户组。因此 120Hz/240Hz 流畅度要求仍 **BLOCKED**，不得声称达到目标。
 
+本轮新增 `DockPerformanceRecorder` / `M0PerformanceSession`，用 `GLASSDOCK_M0_PERF_TRACE=1` 显式启用。hover 动画入口也记为逻辑更新；记录器输出逻辑更新间隔、WPF/WinUI framework `CompositionTarget.Rendering` 回调间隔、动画完成/中断时长和 P50/P95/P99 分布。idle/animation 边界之间的渲染间隔被省略，避免把跨状态时间误标到任一阶段。CPU 时间在动画阶段边界采样成独立进程阶段窗口，working set/private bytes 同时按一秒间隔采样并标记采样瞬间的状态；一秒 CPU 区间可能跨阶段，因此不可按该标签解释为精确阶段 CPU。GPU 利用率和显存明确写为 null。trace 通过后台写入器写到显式指定的 D 盘 `GLASSDOCK_POC_STATE_ROOT`，没有此路径时拒绝启用。
+
+本机 Release 构建与新增纯单测验证代码和统计公式；本轮没有启动窗口或创建性能 trace，因此目前没有任何 Dock 自身 P50/P95/P99、分阶段 CPU/内存或动画负载数值。`CompositionTarget.Rendering` 是框架渲染回调：WPF 文档描述它发生在 composition tree 渲染前；WinUI 文档说明该回调在 UI 线程，订阅会令线程每帧保持活跃。采集器会在 Dock 关闭时解绑，且默认关闭；计时回调是代理指标，不是 GPU submit、每进程 Present、DWM 最终合成或物理面板 scanout。订阅和阶段边界查询仍有测量开销，正式比较时须做 telemetry-off 对照。`scripts/measure-poc.ps1 -EnableM0Telemetry` 已连接此开关，但该脚本会显示置顶窗口并影响前台，未获批不运行。
+
 ## 7. 本地构建、测试、CI 与克隆
 
 最新本地构建和测试使用仓库 D 盘 SDK `10.0.402`；`TEMP/TMP`、`DOTNET_CLI_HOME`、`NUGET_PACKAGES`、NuGet 缓存、bin/obj 均在 D 盘。
 
 | 验证 | 结果 |
 |---|---|
-| 当前工作树 Release solution build | PASS；11 个项目，0 警告、0 错误，退出码 0；日志 `D:\MacOS\GlassDock-Win\.local\evidence\final-validation\resume-20261023T032851Z\build-after-readiness-fix.log` |
-| Core 单元测试 | PASS；11/11，0 失败、0 跳过，退出码 0；同目录 `test-after-readiness-fix.log` |
-| PowerShell 静态解析 | PASS；20 个脚本，0 ParserError；结果 `resume-20261023T032925Z\powershell-parse-summary.txt` |
+| 2026-10-23 当前工作树 Release solution build | PASS；11 个项目，0 警告、0 错误，退出码 0；日志 `D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\architecture-20261023\build.log`；SDK 版本 `10.0.402` |
+| 2026-10-23 Core 单元测试 | PASS；18/18，0 失败、0 跳过，退出码 0；日志 `D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\architecture-20261023\test.log` |
+| 2026-10-23 PowerShell 静态解析 | PASS；20 个脚本，0 ParserError；结果 `D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\architecture-20261023\powershell-parse.txt` |
+| 差异/边界复核 | `git diff --check` PASS；LICENSE 与 HEAD 无差异；检查时无 GlassDock PoC 进程；记录在同一目录的 `diff-check.txt`、`license-unchanged.txt`、`process-check.txt` |
 | DWM 被动探针 | PASS；16/16 `S_OK`；仅全局合成指标 |
 | 桌面测试恢复 | 最近一次视觉候选恢复检查 14/14 PASS；点击路由候选 12/12 PASS；无测试进程残留 |
 
@@ -104,11 +111,15 @@ WinUI 候选实现调用公开 User32 `SetWindowRgn`，用公开 GDI `CreateRoun
 
 远程 CI 已核实的精确提交：基线 `3a6ca88b6925f60ecea5971f8781b7482153ed0c` 的 [Windows CI run 39767098768](https://github.com/LYL-Z/GlassDock-Win/actions/runs/39767098768) 成功；实现提交 `b4d78b8be3f47f08febbf261c720e6dc318e170a` 的 [run 39800785724](https://github.com/LYL-Z/GlassDock-Win/actions/runs/39800785724) 成功；本轮 M0 缺口补测提交 `8be36ea111e35875dbc3ff8cab96474a36e6d413` 的 [run 39896333410](https://github.com/LYL-Z/GlassDock-Win/actions/runs/39896333410) 成功。该最新 run 的 Build 为 0 警告/0 错误，Test 为 11/11；GitHub 另有 Actions Node.js 20 弃用及 setup-dotnet 依赖 `punycode` 弃用提示，不是项目构建警告，步骤均成功。每项远程结果仅适用于所列 SHA。
 
+本次 2026-10-23 续作的 18/18 本地结果只对应当前未提交工作树；尚未提交或触发新的远程 CI，不能把前述旧 SHA 的 Actions 结果套用到这些改动。
+
 ## 8. WinUI 与 WPF 技术结论
 
-WinUI 默认透明区失败日志表明事件到达覆盖全窗的透明 `LayoutRoot`；处理器没有标记 `Handled`，证据更符合“矩形 HWND 命中加可命中的 XAML 根元素”截获，而非按钮吞掉已处理事件。`SetWindowRgn` 公开候选已让三边透明区下传，同时保留内容点击和拖动；其代价是实际窗口形状和阴影受 region 裁剪，测试只覆盖当前尺寸/DPI，不能直接作为最终设计。`WS_EX_TRANSPARENT` 会让整个 layered window 的输入下传，不能单独满足 Dock 内容交互；`HTTRANSPARENT` 对跨线程下层转发的保证不足。
+WinUI 默认透明区失败日志表明事件到达覆盖全窗的透明 `LayoutRoot`；处理器没有标记 `Handled`，证据更符合“矩形 HWND 命中加可命中的 XAML 根元素”截获，而非按钮吞掉已处理事件。`SetWindowRgn` 公开候选已让三边透明区下传，同时保留内容点击和拖动；其实际视觉候选仍有矩形边缘，shadow/AA/放大裁剪未过。`WS_EX_TRANSPARENT` 会让整个 layered window 的输入下传，不能单独满足 Dock 内容交互；`HTTRANSPARENT` 对跨线程下层转发的保证不足。
 
-WPF 默认实现的输入证据最好，但全屏测试中出现“DXGI 仍独占、Dock 命中却未在 WGC 帧里出现”的未决状态。两候选都有真实背景透射样本，但没有达到目标模糊；WGC/DWM 测量也没有提供 Dock 自身帧时间。WinUI 默认输入失败现在有一个公开 API 实验通过，但需解决视觉边缘、动态 DPI 和长期维护验证。**当前证据不支持冻结任何框架。** 若公开 WPF/WinUI 路线在满足输入和玻璃视觉之间出现不可调和限制，再以严格范围验证原生 Win32 + DirectComposition；目前没有必要仅为“更底层/更新”而启动该 PoC。
+WPF 默认透明路由证据较强，但其独占全屏窗口虽保持 DXGI exclusive，探针采到的前台 PID 是 Dock；不可见本身符合修订后的全屏规则，抢焦点则不符合。WinUI 的 `App.OnLaunched` 显式 `Activate()` 与 Dock 成为前台相符，独占状态同时退出；原因尚未单因素隔离。WinUI tray popup 无法被自动化工具读取不是产品功能失败，命令映射的纯单测 3/3 通过，实际菜单选择仍未验证。
+
+WPF 与 WinUI 都有 opt-in 系统材质候选且通过构建，视觉能力仍未运行时证明。WinUI 的 `SystemBackdropElement` 是更直接的区域级 Desktop Acrylic API；Composition 还提供背景采样后应用模糊等效果的公开路径。这证明 WinUI 有继续实现 blur 的能力，不等于 Liquid Glass 的光学效果已解决。WPF DWM backdrop 对整块 HWND 生效，layered HWND 组合不确定。WPF 官方 Visual Layer interop 可以作为一次有界后备，但 `HwndHost` 的 opacity、clipping、transform 和输入差异会增加成本。**就公开视觉 API 的可达性而言，WinUI 是优先验证对象；整体架构仍无赢家。** 原生 Win32 + DirectComposition 暂不启动；只有公开的 WPF/WinUI Composition 方案经有限验证都无法同时满足输入和玻璃边缘，再评估原生 PoC。
 
 ## 9. 仓库公开与许可证
 
@@ -125,11 +136,11 @@ WPF 默认实现的输入证据最好，但全屏测试中出现“DXGI 仍独�
 
 ## 10. M0 决策
 
-当前已证实：WPF 默认点击路由 18/18 通过；WinUI 默认透明区 FAIL，但其公开 region 候选在当前限定矩阵中 18/18 通过；两套程序均取得真实 WGC 帧；配置恢复 6/6 通过；普通最大化/无边框共存 4/4 通过；120/240Hz 模式及窗口生存测试通过；DWM 全局计时可被动采集；指定旧提交的远程 CI 和干净克隆均通过。
+当前已证实：WPF 默认点击路由 18/18 通过；WinUI 默认透明区 FAIL，但其公开 region 候选在当前限定矩阵中 18/18 通过；两套程序均取得真实 WGC 帧；配置恢复 6/6 通过；普通最大化/无边框共存 4/4 通过；120/240Hz 模式及窗口生存测试通过；DWM 全局计时可被动采集。WinUI tray Show/Exit 路由单测 3/3 通过；应用侧性能分位数统计单测通过。
 
-仍阻止验收的事项：缺少达到目标的背景模糊/液态玻璃视觉；WPF 独占全屏时 HWND 命中与合成帧可见性不一致；WinUI 启动后退出 DXGI 独占；WinUI 托盘 Show/Exit 无法选择；100/150/200% DPI 和多屏未测；Dock 自身更新/呈现帧时间未测；许可证未决；当前工作树的新改动尚无远程 CI。
+仍阻止验收的事项：基线两栈均无目标背景模糊；新增材质 PoC 尚未真实显示/捕获；WPF 在独占全屏时保持 DXGI exclusive 但前台 PID 为 Dock；WinUI 启动后成为前台并使 DXGI exclusive 退出；独占下实际游戏输入与退出后的自动恢复未测；WinUI tray 实际键盘/鼠标选择与辅助功能路径未测；100/150/200% DPI 和多屏未测；应用计时 trace、独立进程 Present 与面板 scanout 未获得；正式许可证继续待权利人决定；当前工作树的新改动尚无远程 CI。
 
-**结论：M0 不通过，M1 不开始，技术路线不冻结。** 设备缺项要在有合适外接屏/测试机时补证，不能写为 PASS；架构级问题要继续依照已批准范围验证或明确停止条件。
+**结论：M0 不通过，M1 不开始，技术路线不冻结。** WPF Dock 不可见不是全屏失败，但其成为前台是当前默认行为缺陷；WinUI 默认激活/独占状态变化也是缺陷。非激活启动与系统材质候选只经过编译。硬件缺项不写 PASS，也不自动豁免；A/B/C 分级建议待用户确认后再调整阶段门槛。
 
 ## 11. 主要证据路径
 
@@ -141,4 +152,4 @@ WPF 默认实现的输入证据最好，但全屏测试中出现“DXGI 仍独�
 - 独占 DXGI：`D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\fullscreen-exclusive\20261023T032605Z\exclusive-fullscreen-results.json`
 - 托盘/配置：`D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\tray-config\`
 - 120/240Hz 模式：`D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\dpi-refresh\refresh-20261022T161000Z\refresh-results.json`
-- 当前本地构建/测试/脚本解析：`D:\MacOS\GlassDock-Win\.local\evidence\final-validation\resume-20261023T032851Z\` 与 `resume-20261023T032925Z\`
+- 本次架构续作本地构建/18 项单测/20 个脚本解析与边界复核：`D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\architecture-20261023\`

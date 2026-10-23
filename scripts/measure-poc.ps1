@@ -8,6 +8,7 @@ param(
     [int]$ItemCount = 8,
     [ValidateSet(44, 58, 72)]
     [int]$IconSize = 58,
+    [switch]$EnableM0Telemetry,
     [ValidateRange(5, 300)]
     [int]$DurationSeconds = 15
 )
@@ -85,11 +86,15 @@ $runCompleted = $false
 $oldItemCount = $env:GLASSDOCK_POC_ITEM_COUNT
 $oldIconSize = $env:GLASSDOCK_POC_ICON_SIZE
 $oldStateRoot = $env:GLASSDOCK_POC_STATE_ROOT
+$oldPerfTrace = $env:GLASSDOCK_M0_PERF_TRACE
 $process = $null
 try {
     $env:GLASSDOCK_POC_ITEM_COUNT = [string]$ItemCount
     $env:GLASSDOCK_POC_ICON_SIZE = [string]$IconSize
-    $env:GLASSDOCK_POC_STATE_ROOT = Join-Path $script:LocalRoot "poc-state\$Candidate"
+    $env:GLASSDOCK_POC_STATE_ROOT = Join-Path $script:LocalRoot "evidence\m0-gap\performance\$timestamp\$Candidate-$ItemCount-items-$IconSize-dip"
+    $performanceTraceDirectory = Join-Path $env:GLASSDOCK_POC_STATE_ROOT 'performance'
+    if ($EnableM0Telemetry) { $env:GLASSDOCK_M0_PERF_TRACE = '1' }
+    else { Remove-Item Env:GLASSDOCK_M0_PERF_TRACE -ErrorAction SilentlyContinue }
     $process = Start-M0OwnedTestProcess -Session $session -FilePath $exePath -WorkingDirectory $projectFolder
 }
 catch {
@@ -164,7 +169,8 @@ try {
         PeakWorkingSetBytes = $peakWorkingSet
         PeakPrivateBytes = $peakPrivateBytes
         CsvPath = $csvPath
-        FrameTime = 'Not measured by this script; use a WPR/WPA XAML frame trace for animation scenarios.'
+        AppTelemetry = if ($EnableM0Telemetry) { "Opt-in app-side logic/render-callback/animation samples; JSONL directory: $performanceTraceDirectory. Not GPU submit, process Present, DWM, or panel scanout." } else { 'Disabled; use -EnableM0Telemetry for framework callbacks and animation timing.' }
+        FrameTime = 'No final presented-frame or physical scanout measurement is produced by this script.'
     } | Format-List
     $runCompleted = $true
 }
@@ -173,6 +179,8 @@ finally {
         try { [void](Stop-M0OwnedTestProcess $session $process) }
         catch { Write-Warning "Owned-process cleanup failed: $($_.Exception.Message)" }
     }
+    if ($null -eq $oldPerfTrace) { Remove-Item Env:GLASSDOCK_M0_PERF_TRACE -ErrorAction SilentlyContinue }
+    else { $env:GLASSDOCK_M0_PERF_TRACE = $oldPerfTrace }
     try { [void](Stop-M0InteractiveTestSession -Session $session -Completed $runCompleted) }
     catch { Write-Warning "Interactive safety restoration failed; inspect $($session.EvidenceRoot): $($_.Exception.Message)" }
 }

@@ -11,6 +11,7 @@ param(
     [string[]]$BackdropThemes = @('Light', 'Dark'),
     [ValidateSet(44, 58, 72)]
     [int[]]$IconSizes = @(44, 58, 72),
+    [switch]$UseFrameworkGlassCandidate,
     [switch]$UseWinUiRoundedRegionCandidate
 )
 
@@ -41,6 +42,7 @@ $oldStateRoot = $env:GLASSDOCK_POC_STATE_ROOT
 $oldItemCount = $env:GLASSDOCK_POC_ITEM_COUNT
 $oldIconSize = $env:GLASSDOCK_POC_ICON_SIZE
 $oldWindowRegion = $env:GLASSDOCK_M0_TEST_ROUNDED_REGION
+$oldVisualCandidate = $env:GLASSDOCK_M0_VISUAL_CANDIDATE
 $rows = [System.Collections.Generic.List[object]]::new()
 $runCompleted = $false
 $activeProcesses = [System.Collections.Generic.List[System.Diagnostics.Process]]::new()
@@ -106,6 +108,10 @@ try {
                         $env:GLASSDOCK_POC_STATE_ROOT = $stateRoot
                         $env:GLASSDOCK_POC_ITEM_COUNT = '8'
                         $env:GLASSDOCK_POC_ICON_SIZE = [string]$iconSize
+                        if ($UseFrameworkGlassCandidate) {
+                            $env:GLASSDOCK_M0_VISUAL_CANDIDATE = if ($candidate -eq 'Wpf') { 'wpf-dwm-acrylic' } else { 'winui-system-acrylic' }
+                        }
+                        else { Remove-Item Env:GLASSDOCK_M0_VISUAL_CANDIDATE -ErrorAction SilentlyContinue }
                         if ($UseWinUiRoundedRegionCandidate) { $env:GLASSDOCK_M0_TEST_ROUNDED_REGION = '1' }
                         else { Remove-Item Env:GLASSDOCK_M0_TEST_ROUNDED_REGION -ErrorAction SilentlyContinue }
                         $dockProcess = Start-M0OwnedTestProcess -Session $session -FilePath $dockExe -WorkingDirectory $projectFolder
@@ -155,7 +161,10 @@ try {
 
                     $rows.Add([pscustomobject]@{
                         Candidate = $candidate
-                        CandidateVariant = if ($UseWinUiRoundedRegionCandidate) { 'WinUI SetWindowRgn rounded-region opt-in' } else { 'Default' }
+                        CandidateVariant = @(
+                            if ($UseFrameworkGlassCandidate) { 'Framework system acrylic candidate' } else { 'Default' }
+                            if ($UseWinUiRoundedRegionCandidate) { 'WinUI SetWindowRgn rounded-region opt-in' }
+                        ) -join ' + '
                         BackdropTheme = $theme
                         Edge = $edge
                         IconSizeDip = $iconSize
@@ -171,6 +180,8 @@ try {
                     $env:GLASSDOCK_POC_STATE_ROOT = $oldStateRoot
                     $env:GLASSDOCK_POC_ITEM_COUNT = $oldItemCount
                     $env:GLASSDOCK_POC_ICON_SIZE = $oldIconSize
+                    if ($null -eq $oldVisualCandidate) { Remove-Item Env:GLASSDOCK_M0_VISUAL_CANDIDATE -ErrorAction SilentlyContinue }
+                    else { $env:GLASSDOCK_M0_VISUAL_CANDIDATE = $oldVisualCandidate }
                 }
             }
         }
@@ -183,7 +194,8 @@ finally {
         @{ Name='GLASSDOCK_POC_STATE_ROOT'; Value=$oldStateRoot },
         @{ Name='GLASSDOCK_POC_ITEM_COUNT'; Value=$oldItemCount },
         @{ Name='GLASSDOCK_POC_ICON_SIZE'; Value=$oldIconSize },
-        @{ Name='GLASSDOCK_M0_TEST_ROUNDED_REGION'; Value=$oldWindowRegion }
+        @{ Name='GLASSDOCK_M0_TEST_ROUNDED_REGION'; Value=$oldWindowRegion },
+        @{ Name='GLASSDOCK_M0_VISUAL_CANDIDATE'; Value=$oldVisualCandidate }
     )) {
         if ($null -eq $entry.Value) { Remove-Item "Env:$($entry.Name)" -ErrorAction SilentlyContinue }
         else { [Environment]::SetEnvironmentVariable($entry.Name, [string]$entry.Value, 'Process') }

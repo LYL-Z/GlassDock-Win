@@ -5,6 +5,10 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="GlassDock-Win WinUI 3 spike">
     <Grid x:Name="LayoutRoot" Background="Transparent" RightTapped="LayoutRoot_RightTapped">
+        <Border x:Name="ShadowReceiver" Margin="8" CornerRadius="28"
+                Background="Transparent" IsHitTestVisible="False" />
+        <SystemBackdropElement x:Name="BackdropElement" Margin="8" CornerRadius="28"
+                               Visibility="Collapsed" IsHitTestVisible="False" />
         <Border x:Name="GlassPanel" Margin="8" Padding="12,8"
                 CornerRadius="28" Background="#A82B3341"
                 BorderBrush="#55FFFFFF" BorderThickness="1">

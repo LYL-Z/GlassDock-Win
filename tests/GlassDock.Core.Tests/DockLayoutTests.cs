@@ -84,3 +84,123 @@ public sealed class DemoDockItemsTests
         Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => DemoDockItems.Create(12));
     }
 }
+
+[TestClass]
+public sealed class DockTrayCommandRouterTests
+{
+    [TestMethod]
+    public void ShowCommandInvokesShowOnly()
+    {
+        var showCount = 0;
+        var exitCount = 0;
+
+        var handled = DockTrayCommandRouter.Dispatch((uint)DockTrayCommand.Show,
+            () => showCount++, () => exitCount++);
+
+        Assert.IsTrue(handled);
+        Assert.AreEqual(1, showCount);
+        Assert.AreEqual(0, exitCount);
+    }
+
+    [TestMethod]
+    public void ExitCommandInvokesExitOnly()
+    {
+        var showCount = 0;
+        var exitCount = 0;
+
+        var handled = DockTrayCommandRouter.Dispatch((uint)DockTrayCommand.Exit,
+            () => showCount++, () => exitCount++);
+
+        Assert.IsTrue(handled);
+        Assert.AreEqual(0, showCount);
+        Assert.AreEqual(1, exitCount);
+    }
+
+    [TestMethod]
+    public void UnknownCommandInvokesNeitherAction()
+    {
+        var invocationCount = 0;
+
+        var handled = DockTrayCommandRouter.Dispatch(99,
+            () => invocationCount++, () => invocationCount++);
+
+        Assert.IsFalse(handled);
+        Assert.AreEqual(0, invocationCount);
+    }
+}
+
+[TestClass]
+public sealed class DockPerformanceRecorderTests
+{
+    [TestMethod]
+    public void RecordsPhaseSeparatedRenderIntervalsAndAnimationDuration()
+    {
+        var recorder = new DockPerformanceRecorder(timestampFrequency: 1000);
+        recorder.RecordFrameworkRenderCallback(0);
+        recorder.RecordFrameworkRenderCallback(10);
+        var animation = recorder.BeginAnimation(12);
+        recorder.RecordFrameworkRenderCallback(20);
+        recorder.RecordFrameworkRenderCallback(36);
+        Assert.IsTrue(recorder.EndAnimation(animation, 42, completed: true));
+        recorder.RecordFrameworkRenderCallback(50);
+
+        var snapshot = recorder.CreateSnapshot();
+
+        // Intervals that cross an idle/animation boundary are omitted instead of mislabeled.
+        Assert.AreEqual(1, snapshot.IdleFrameworkRenderIntervals.SampleCount);
+        Assert.AreEqual(1, snapshot.AnimationFrameworkRenderIntervals.SampleCount);
+        Assert.AreEqual(10d, snapshot.IdleFrameworkRenderIntervals.P50Milliseconds);
+        Assert.AreEqual(16d, snapshot.AnimationFrameworkRenderIntervals.P50Milliseconds);
+        Assert.AreEqual(16d, snapshot.AnimationFrameworkRenderIntervals.P95Milliseconds);
+        Assert.AreEqual(30d, snapshot.CompletedAnimationDurations.P50Milliseconds);
+        Assert.AreEqual(1, snapshot.CompletedAnimationCount);
+        Assert.AreEqual(0, snapshot.OpenAnimationCount);
+    }
+
+    [TestMethod]
+    public void UsesNearestRankPercentilesAndKeepsRawSamples()
+    {
+        var recorder = new DockPerformanceRecorder(timestampFrequency: 1000);
+        recorder.RecordLogicalUpdate(0);
+        recorder.RecordLogicalUpdate(10);
+        recorder.RecordLogicalUpdate(30);
+        recorder.RecordLogicalUpdate(60);
+        recorder.RecordLogicalUpdate(100);
+
+        var snapshot = recorder.CreateSnapshot();
+
+        Assert.AreEqual(4, snapshot.LogicalUpdateIntervals.SampleCount);
+        Assert.AreEqual(20d, snapshot.LogicalUpdateIntervals.P50Milliseconds);
+        Assert.AreEqual(40d, snapshot.LogicalUpdateIntervals.P95Milliseconds);
+        Assert.AreEqual(40d, snapshot.LogicalUpdateIntervals.P99Milliseconds);
+        CollectionAssert.AreEqual(new[] { 10d, 20d, 30d, 40d },
+            snapshot.LogicalUpdateIntervalSamplesMilliseconds.ToArray());
+    }
+
+    [TestMethod]
+    public void ReportsEmptyDistributionsWithoutInventingZeroMeasurements()
+    {
+        var snapshot = new DockPerformanceRecorder(timestampFrequency: 1000).CreateSnapshot();
+
+        Assert.AreEqual(0, snapshot.IdleFrameworkRenderIntervals.SampleCount);
+        Assert.IsNull(snapshot.IdleFrameworkRenderIntervals.P50Milliseconds);
+        Assert.IsNull(snapshot.IdleFrameworkRenderIntervals.P95Milliseconds);
+        Assert.IsNull(snapshot.IdleFrameworkRenderIntervals.P99Milliseconds);
+    }
+
+    [TestMethod]
+    public void RecordsInterruptedAndUnknownAnimationStatesSeparately()
+    {
+        var recorder = new DockPerformanceRecorder(timestampFrequency: 1000);
+        var animation = recorder.BeginAnimation(100);
+
+        Assert.IsFalse(recorder.EndAnimation(animation + 1, 110, completed: false));
+        Assert.IsTrue(recorder.EndAnimation(animation, 115, completed: false));
+
+        var snapshot = recorder.CreateSnapshot();
+
+        Assert.AreEqual(1, snapshot.CancelledAnimationCount);
+        Assert.AreEqual(15d, snapshot.CancelledAnimationDurations.P50Milliseconds);
+        Assert.AreEqual(0, snapshot.OpenAnimationCount);
+    }
+}

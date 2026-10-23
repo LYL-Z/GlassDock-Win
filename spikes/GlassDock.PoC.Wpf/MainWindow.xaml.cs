@@ -26,6 +26,8 @@ public partial class MainWindow : System.Windows.Window, IDockWindowHost
     private readonly string _m0InputTracePath = Path.Combine(GetStateRoot(), "m0-input-events.jsonl");
     private readonly string _m0ScenarioMarkerPath = Path.Combine(GetStateRoot(), "m0-current-scenario.txt");
     private readonly WinForms.NotifyIcon _trayIcon;
+    private readonly Dictionary<System.Windows.FrameworkElement, long> _activeAnimations = [];
+    private readonly M0PerformanceSession? _performance;
     private DockEdge _edge;
     private HwndSource? _source;
     private int _itemCount;
@@ -35,6 +37,18 @@ public partial class MainWindow : System.Windows.Window, IDockWindowHost
     public MainWindow()
     {
         InitializeComponent();
+        if (string.Equals(Environment.GetEnvironmentVariable("GLASSDOCK_M0_NONACTIVATING_START"), "1",
+                StringComparison.Ordinal))
+        {
+            ShowActivated = false;
+            DockLogger.Info("M0 non-activating WPF startup candidate enabled via Window.ShowActivated=false.");
+        }
+        _performance = M0PerformanceSession.CreateIfEnabled("WPF");
+        if (_performance is not null)
+        {
+            CompositionTarget.Rendering += OnCompositionRendering;
+            DockLogger.Info($"M0 performance trace enabled; path={_performance.TracePath}.");
+        }
         PreviewMouseLeftButtonDown += (_, e) => TraceM0Input("PointerDown", e.GetPosition(this), "window");
         PreviewMouseLeftButtonUp += (_, e) => TraceM0Input("PointerUp", e.GetPosition(this), "window");
         PreviewMouseMove += (_, e) =>
@@ -61,7 +75,15 @@ public partial class MainWindow : System.Windows.Window, IDockWindowHost
             UpdateDiagnostics();
             DockLogger.Info($"WPF spike launched; edge={_edge}; dpi={GetDpiForWindow(_source!.Handle)}.");
         };
-        Closed += (_, _) => _trayIcon.Dispose();
+        Closed += (_, _) =>
+        {
+            CompositionTarget.Rendering -= OnCompositionRendering;
+            foreach (var animationId in _activeAnimations.Values)
+                _performance?.EndAnimation(animationId, completed: false);
+            _activeAnimations.Clear();
+            _performance?.Dispose();
+            _trayIcon.Dispose();
+        };
     }
 
     public ValueTask ShowAsync(CancellationToken cancellationToken = default)
@@ -84,6 +106,7 @@ public partial class MainWindow : System.Windows.Window, IDockWindowHost
         base.OnSourceInitialized(e);
         _source = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
         _source.AddHook(WindowProc);
+        ApplyDwmBackdropCandidate(_source.Handle);
     }
 
     private void BuildDockItems()
@@ -150,14 +173,37 @@ public partial class MainWindow : System.Windows.Window, IDockWindowHost
         }
     }
 
-    private static void AnimateScale(System.Windows.FrameworkElement element, double target)
+    private void AnimateScale(System.Windows.FrameworkElement element, double target)
     {
+        _performance?.RecordLogicalUpdate();
         if (element.RenderTransform is not ScaleTransform scale)
             return;
+
+        if (_activeAnimations.Remove(element, out var previousAnimation))
+            _performance?.EndAnimation(previousAnimation, completed: false);
+
         var duration = TimeSpan.FromMilliseconds(130);
-        scale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(target, duration));
+        var xAnimation = new DoubleAnimation(target, duration);
+        if (_performance is not null)
+        {
+            var animationId = _performance.BeginAnimation();
+            _activeAnimations[element] = animationId;
+            xAnimation.Completed += (_, _) =>
+            {
+                if (_activeAnimations.TryGetValue(element, out var activeId) && activeId == animationId)
+                {
+                    _activeAnimations.Remove(element);
+                    _performance.EndAnimation(animationId, completed: true);
+                }
+            };
+        }
+
+        scale.BeginAnimation(ScaleTransform.ScaleXProperty, xAnimation);
         scale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(target, duration));
     }
+
+    private void OnCompositionRendering(object? sender, EventArgs e) =>
+        _performance?.RecordFrameworkRenderCallback();
 
     private WinForms.ContextMenuStrip CreateTrayMenu()
     {
@@ -245,6 +291,7 @@ public partial class MainWindow : System.Windows.Window, IDockWindowHost
 
     private void SetEdge(DockEdge edge)
     {
+        _performance?.RecordLogicalUpdate();
         _edge = edge;
         PlaceAtEdge();
     }
@@ -261,12 +308,14 @@ public partial class MainWindow : System.Windows.Window, IDockWindowHost
 
     private void SetItemCount(int count)
     {
+        _performance?.RecordLogicalUpdate();
         _itemCount = count;
         PlaceAtEdge();
     }
 
     private void SetIconSize(double size)
     {
+        _performance?.RecordLogicalUpdate();
         _requestedIconSize = size;
         PlaceAtEdge();
     }
@@ -296,6 +345,7 @@ public partial class MainWindow : System.Windows.Window, IDockWindowHost
     {
         if (sender is WpfButton { Tag: DockItem item })
         {
+            _performance?.RecordLogicalUpdate();
             StatusText.Text = $"Placeholder selected: {item.Label} · action not connected";
             var scenario = File.Exists(_m0ScenarioMarkerPath) ? File.ReadAllText(_m0ScenarioMarkerPath).Trim() : "unmarked";
             DockLogger.Info($"Placeholder selected: {item.Id}; M0 scenario={scenario}.");
@@ -367,8 +417,31 @@ public partial class MainWindow : System.Windows.Window, IDockWindowHost
 
     private sealed record DockSettings(string Edge);
 
+    private void ApplyDwmBackdropCandidate(nint hwnd)
+    {
+        if (!string.Equals(Environment.GetEnvironmentVariable("GLASSDOCK_M0_VISUAL_CANDIDATE"),
+                "wpf-dwm-acrylic", StringComparison.Ordinal))
+            return;
+
+        var transientWindowBackdrop = 3;
+        var result = DwmSetWindowAttribute(hwnd, DwmwaSystemBackdropType,
+            ref transientWindowBackdrop, sizeof(int));
+        if (result >= 0)
+            GlassPanel.Background = new SolidColorBrush(MediaColor.FromArgb(0x32, 43, 51, 65));
+        DockLogger.Info($"WPF DWM system-backdrop candidate requested; attribute=DWMWA_SYSTEMBACKDROP_TYPE(" +
+                        $"{DwmwaSystemBackdropType}); type=DWMSBT_TRANSIENTWINDOW({transientWindowBackdrop}); " +
+                        $"HRESULT=0x{result:X8}; hwndIsWpfAllowsTransparencyLayeredWindow=true. " +
+                        "API success does not prove visible blur; capture the DWM-composed result separately.");
+    }
+
+    private const int DwmwaSystemBackdropType = 38;
+
     [DllImport("user32.dll")]
     private static extern uint GetDpiForWindow(nint hWnd);
+
+    [DllImport("dwmapi.dll", PreserveSig = true)]
+    private static extern int DwmSetWindowAttribute(nint hwnd, int attribute,
+        ref int value, int valueSize);
 
     [DllImport("user32.dll")]
     private static extern nint GetMessageExtraInfo();

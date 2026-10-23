@@ -13,8 +13,16 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
-        _window = new MainWindow();
+        var mainWindow = new MainWindow();
+        _window = mainWindow;
+        if (string.Equals(Environment.GetEnvironmentVariable("GLASSDOCK_M0_NONACTIVATING_START"), "1",
+                StringComparison.Ordinal))
+        {
+            mainWindow.ShowWithoutActivation();
+            return;
+        }
+
         _window.Activate();
-        ((MainWindow)_window).QueueTopmostReassertion();
+        mainWindow.QueueTopmostReassertion();
     }
 }

@@ -1,12 +1,15 @@
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Numerics;
 using GlassDock.App;
 using GlassDock.Core;
+using Microsoft.UI.Composition;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Windows.Graphics;
@@ -30,6 +33,8 @@ public sealed partial class MainWindow : Window, IDockWindowHost
     private readonly nint _hwnd;
     private readonly AppWindow _appWindow;
     private readonly NativeTrayIcon _trayIcon;
+    private readonly Dictionary<FrameworkElement, long> _activeAnimations = [];
+    private readonly M0PerformanceSession? _performance;
     private DockEdge _edge;
     private int _itemCount;
     private double _requestedIconSize;
@@ -38,6 +43,12 @@ public sealed partial class MainWindow : Window, IDockWindowHost
     public MainWindow()
     {
         InitializeComponent();
+        _performance = M0PerformanceSession.CreateIfEnabled("WinUI");
+        if (_performance is not null)
+        {
+            CompositionTarget.Rendering += OnCompositionRendering;
+            DockLogger.Info($"M0 performance trace enabled; path={_performance.TracePath}.");
+        }
         LayoutRoot.PointerPressed += (_, e) => TraceM0Input("PointerDown", e, "window");
         LayoutRoot.PointerReleased += (_, e) => TraceM0Input("PointerUp", e, "window");
         LayoutRoot.PointerMoved += (_, e) =>
@@ -46,6 +57,7 @@ public sealed partial class MainWindow : Window, IDockWindowHost
                 TraceM0Input("PointerMoveLeftHeld", e, "window");
         };
         _hwnd = WindowNative.GetWindowHandle(this);
+        ConfigureVisualCandidate();
         var windowId = Win32Interop.GetWindowIdFromWindow(_hwnd);
         _appWindow = AppWindow.GetFromWindowId(windowId);
         _itemCount = ReadItemCount();
@@ -58,6 +70,14 @@ public sealed partial class MainWindow : Window, IDockWindowHost
         _trayIcon = new NativeTrayIcon(_hwnd, () => Activate(), RequestExit);
         Closed += (_, _) => DockLogger.Info("WinUI 3 spike window closed.");
         Closed += (_, _) => _trayIcon.Dispose();
+        Closed += (_, _) =>
+        {
+            CompositionTarget.Rendering -= OnCompositionRendering;
+            foreach (var animationId in _activeAnimations.Values)
+                _performance?.EndAnimation(animationId, completed: false);
+            _activeAnimations.Clear();
+            _performance?.Dispose();
+        };
     }
 
     public ValueTask ShowAsync(CancellationToken cancellationToken = default)
@@ -78,6 +98,13 @@ public sealed partial class MainWindow : Window, IDockWindowHost
     {
         if (!DispatcherQueue.GetForCurrentThread().TryEnqueue(EnsureTopmostWithoutActivation))
             EnsureTopmostWithoutActivation();
+    }
+
+    public void ShowWithoutActivation()
+    {
+        _appWindow.Show(activateWindow: false);
+        QueueTopmostReassertion();
+        DockLogger.Info("M0 non-activating WinUI startup candidate enabled via AppWindow.Show(false).");
     }
 
     private void ConfigureWindow()
@@ -152,8 +179,8 @@ public sealed partial class MainWindow : Window, IDockWindowHost
                 Tag = item
             };
             ToolTipService.SetToolTip(button, item.Label);
-            button.PointerEntered += (_, _) => card.RenderTransform = new ScaleTransform { ScaleX = 1.08, ScaleY = 1.08 };
-            button.PointerExited += (_, _) => card.RenderTransform = new ScaleTransform { ScaleX = 1, ScaleY = 1 };
+            button.PointerEntered += (_, _) => AnimateScale(card, 1.08);
+            button.PointerExited += (_, _) => AnimateScale(card, 1.0);
             button.Click += DockItem_Click;
             ItemsStack.Children.Add(button);
         }
@@ -227,6 +254,7 @@ public sealed partial class MainWindow : Window, IDockWindowHost
     {
         if (sender is Button { Tag: DockItem item })
         {
+            _performance?.RecordLogicalUpdate();
             StatusText.Text = $"Placeholder selected: {item.Label} · action not connected";
             var scenario = File.Exists(_m0ScenarioMarkerPath) ? File.ReadAllText(_m0ScenarioMarkerPath).Trim() : "unmarked";
             DockLogger.Info($"Placeholder selected: {item.Id}; M0 scenario={scenario}.");
@@ -288,7 +316,11 @@ public sealed partial class MainWindow : Window, IDockWindowHost
     private void AddEdgeItem(MenuFlyout menu, string text, DockEdge edge)
     {
         var item = new MenuFlyoutItem { Text = text };
-        item.Click += (_, _) => ApplyEdge(edge);
+        item.Click += (_, _) =>
+        {
+            _performance?.RecordLogicalUpdate();
+            ApplyEdge(edge);
+        };
         menu.Items.Add(item);
     }
 
@@ -297,6 +329,7 @@ public sealed partial class MainWindow : Window, IDockWindowHost
         var item = new MenuFlyoutItem { Text = text };
         item.Click += (_, _) =>
         {
+            _performance?.RecordLogicalUpdate();
             _itemCount = count;
             ApplyEdge(_edge);
         };
@@ -308,6 +341,7 @@ public sealed partial class MainWindow : Window, IDockWindowHost
         var item = new MenuFlyoutItem { Text = text };
         item.Click += (_, _) =>
         {
+            _performance?.RecordLogicalUpdate();
             _requestedIconSize = size;
             ApplyEdge(_edge);
         };
@@ -328,6 +362,66 @@ public sealed partial class MainWindow : Window, IDockWindowHost
         out var size) && size is >= 36 and <= 80
             ? size
             : 58;
+
+    private void ConfigureVisualCandidate()
+    {
+        if (!string.Equals(Environment.GetEnvironmentVariable("GLASSDOCK_M0_VISUAL_CANDIDATE"),
+                "winui-system-acrylic", StringComparison.Ordinal))
+            return;
+
+        BackdropElement.SystemBackdrop = new Microsoft.UI.Xaml.Media.DesktopAcrylicBackdrop();
+        BackdropElement.Visibility = Visibility.Visible;
+        GlassPanel.Background = new SolidColorBrush(ColorHelper.FromArgb(0x28, 43, 51, 65));
+
+        var shadow = new ThemeShadow();
+        shadow.Receivers.Add(ShadowReceiver);
+        GlassPanel.Shadow = shadow;
+        GlassPanel.Translation = new Vector3(0, 0, 16);
+        DockLogger.Info("WinUI SystemBackdropElement Desktop Acrylic candidate enabled with 28 DIP rounded bounds, " +
+                        "translucent tint, rim, and ThemeShadow. DWM-composed visual capture is still required.");
+    }
+
+    private void AnimateScale(FrameworkElement element, double target)
+    {
+        _performance?.RecordLogicalUpdate();
+        var visual = ElementCompositionPreview.GetElementVisual(element);
+        visual.CenterPoint = new Vector3((float)(element.ActualWidth / 2), (float)(element.ActualHeight / 2), 0);
+        if (_activeAnimations.Remove(element, out var previousAnimation))
+        {
+            _performance?.EndAnimation(previousAnimation, completed: false);
+            visual.StopAnimation("Scale");
+        }
+
+        var animation = visual.Compositor.CreateVector3KeyFrameAnimation();
+        animation.InsertKeyFrame(1f, new Vector3((float)target, (float)target, 1f));
+        animation.Duration = TimeSpan.FromMilliseconds(130);
+
+        long animationId = 0;
+        if (_performance is not null)
+        {
+            animationId = _performance.BeginAnimation();
+            _activeAnimations[element] = animationId;
+        }
+
+        var batch = visual.Compositor.CreateScopedBatch(CompositionBatchTypes.Animation);
+        if (_performance is not null)
+        {
+            batch.Completed += (_, _) =>
+            {
+                if (_activeAnimations.TryGetValue(element, out var activeId) && activeId == animationId)
+                {
+                    _activeAnimations.Remove(element);
+                    _performance.EndAnimation(animationId, completed: true);
+                }
+            };
+        }
+
+        visual.StartAnimation("Scale", animation);
+        batch.End();
+    }
+
+    private void OnCompositionRendering(object? sender, object args) =>
+        _performance?.RecordFrameworkRenderCallback();
 
     private static string GetStateRoot()
     {

@@ -20,8 +20,6 @@ internal sealed class NativeTrayIcon : IDisposable
     private const uint MfSeparator = 0x00000800;
     private const uint TpmRightButton = 0x0002;
     private const uint TpmReturnCommand = 0x0100;
-    private const uint ExitCommand = 2;
-    private const uint ShowCommand = 1;
 
     private readonly nint _windowHandle;
     private readonly Action _showDock;
@@ -120,19 +118,16 @@ internal sealed class NativeTrayIcon : IDisposable
 
         try
         {
-            _ = AppendMenu(menu, MfString, ShowCommand, "Show Dock");
+            _ = AppendMenu(menu, MfString, (uint)GlassDock.Core.DockTrayCommand.Show, "Show Dock");
             _ = AppendMenu(menu, MfSeparator, 0, null);
-            _ = AppendMenu(menu, MfString, ExitCommand, "Exit GlassDock");
+            _ = AppendMenu(menu, MfString, (uint)GlassDock.Core.DockTrayCommand.Exit, "Exit GlassDock");
             _ = GetCursorPos(out var cursor);
             _ = SetForegroundWindow(_windowHandle);
             var command = TrackPopupMenu(menu, TpmRightButton | TpmReturnCommand,
                 cursor.X, cursor.Y, 0, _windowHandle, nint.Zero);
             _ = PostMessage(_windowHandle, WmNull, nint.Zero, nint.Zero);
 
-            if (command == ShowCommand)
-                _showDock();
-            else if (command == ExitCommand)
-                _exit();
+            _ = GlassDock.Core.DockTrayCommandRouter.Dispatch(command, _showDock, _exit);
         }
         finally
         {
