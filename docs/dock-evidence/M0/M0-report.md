@@ -5,7 +5,7 @@
 - 当前结论：**M0 未通过；不进入 M1；不冻结 WPF、WinUI 3 或 Win32 + DirectComposition。**
 - 桌面测试证据基线提交 `8be36ea111e35875dbc3ff8cab96474a36e6d413` 的 Windows CI run `39896333410` Build/Test 成功。本轮架构探针代码提交 `8f6ca23ecb159dd20e71e0ef303a691cda9293ab` 的 run `39924864083` Build/Test 也成功；两个提交均不代表 M0 整体验收通过。
 - 本次实际执行了已获批准的输入路由、WGC 视觉、窗口共存、显示刷新、托盘/配置恢复及 DXGI 独占全屏测试。未提权、未启动 M1、未改 LICENSE、未创建 Release。
-- 2026-10-23 本次续作只实施了默认关闭的系统材质/非激活启动候选、应用侧性能记录器、托盘命令路由单测及文档/脚本修订；没有启动任何窗口、输入、全屏或桌面捕获。新的候选尚无运行时视觉或共存证据。
+- 2026-10-23 本次续作先实施默认关闭的系统材质/非激活启动候选、应用侧性能记录器、托盘命令路由单测及文档/脚本修订；收到用户指定短语 RUN M0 DESKTOP TEST 后，仅执行本次获批的 18 场景 WGC 视觉矩阵。没有追加输入、全屏、显示模式或其他交互测试。
 
 ## 1. 环境与证据边界
 
@@ -31,15 +31,21 @@ WinUI 候选实现调用公开 User32 `SetWindowRgn`，用公开 GDI `CreateRoun
 
 ## 3. DWM 合成视觉
 
-基线矩阵位于 `D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\visual\20261022T154558Z\`：36/36 次 WGC 捕获成功，组合为 WPF/WinUI 3 × 浅/深受控背景 × Bottom/Left/Right × 44/58/72 DIP。图像和元数据均在各场景目录中。这里的浅/深是测试背景颜色，不是切换 Windows 主题；所有样本来自当前 250% DPI、3840×2400 主屏。捕获成功只说明拿到了图像，不表示视觉要求通过；代表性图片经人工检查，尚未逐张完成视觉验收。
+旧基线矩阵位于 D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\visual\20261022T154558Z\：36/36 次 WGC 捕获成功，覆盖 WPF/WinUI 3、浅/深受控背景、Bottom/Left/Right 及 44/58/72 DIP。它是基线捕获记录，不等同于 36 张逐张视觉验收。
 
-观察结果：
+用户于 2026-10-23 提供约定短语后，按限定范围执行新的三候选对照：WPF + DWM Acrylic、WinUI 3 + Desktop Acrylic、WinUI 3 + Desktop Acrylic + SetWindowRgn；每候选均为浅/深受控底图 × Bottom/Left/Right × 58 DIP，共 18 场景。WGC 捕获 18/18 成功，人工审阅完成 18/18，视觉 PASS 0/18、FAIL 18/18。每个图像的分辨率 3840×2400、DPI 240（250%），单显示器；18/18 元数据都通过受控背景标记校验。场景级原始捕获状态仍保存在 actual-visual-results.csv/json，视觉判定另外保存在 visual-assessment.csv/json，避免把捕获成功改写为视觉通过。
 
-- WPF 代表样本中背景格线能透过 Dock，圆角和阴影可见；格线边缘依然清晰，没有可确认的背景模糊或液态玻璃效果。浅色样本：[WPF light / Bottom / 58 DIP](D:/MacOS/GlassDock-Win/.local/evidence/m0-gap/visual/20261022T154558Z/Wpf-Light-Bottom-58-DIP/composed-frame.png)，深色样本：[WPF dark / Bottom / 58 DIP](D:/MacOS/GlassDock-Win/.local/evidence/m0-gap/visual/20261022T154558Z/Wpf-Dark-Bottom-58-DIP/composed-frame.png)。
-- WinUI 3 基线代表样本显示灰色半透明面板和显眼的浅色矩形宿主边框；背景细节可见，但没有可确认的背景模糊。代表帧：[WinUI light / Bottom / 58 DIP](D:/MacOS/GlassDock-Win/.local/evidence/m0-gap/visual/20261022T154558Z/WinUI-Light-Bottom-58-DIP/composed-frame.png)。
-- 对启用圆角 region 的 WinUI 变体另捕获浅/深两帧，均为 Bottom / 58 DIP / 250% DPI，WGC 2/2 成功。Dock 内容仍完整，窗口区域外缘可见的矩形宿主/阴影轮廓仍需处理，未观察到目标级背景模糊。证据：[候选视觉矩阵](D:/MacOS/GlassDock-Win/.local/evidence/m0-gap/visual/20261023T033440Z/actual-visual-results.json)、[light](D:/MacOS/GlassDock-Win/.local/evidence/m0-gap/visual/20261023T033440Z/WinUI-Light-Bottom-58-DIP/composed-frame.png)、[dark](D:/MacOS/GlassDock-Win/.local/evidence/m0-gap/visual/20261023T033440Z/WinUI-Dark-Bottom-58-DIP/composed-frame.png)。
+| 候选 | 捕获和视觉判定 | 真实模糊 | 边缘、宿主与阴影 | 内容 |
+|---|---|---|---|---|
+| WPF + DWM Acrylic | 捕获 6/6；视觉 FAIL 6/6 | 棋盘、网格和斜线仍清晰。WPF 日志记录 DWM system backdrop 属性返回 HRESULT 0，但这只证明调用成功 | 圆角面板可见，外侧有明显矩形宿主底色/边界；阴影随宿主边界呈方框 | 静态图标 6/6 完整；动画外溢未测 |
+| WinUI 3 + Desktop Acrylic | 捕获 6/6；视觉 FAIL 6/6 | 候选启用日志存在，但底图图案仍清晰；没有确认材质模糊生效 | 圆角 pill 外仍有明显浅色矩形宿主和矩形阴影，深色底图上也显得偏白 | 静态图标 6/6 完整；动画外溢未测 |
+| WinUI 3 + Desktop Acrylic + SetWindowRgn | 捕获 6/6；视觉 FAIL 6/6 | 区域裁剪不产生模糊，背景图案仍清晰 | pill 剪影最明确；六帧仍可见窗口外围矩形边线/光晕。圆角像素级抗锯齿未量化，不能据此判定 HRGN 已达到高质量玻璃边缘 | 静态图标 6/6 完整；缩放动画、拖拽和菜单未测 |
 
-结论：透明透射、模糊、边缘、阴影是不同指标。当前证据支持部分透射和阴影观察，不支持背景模糊或液态玻璃目标已通过；完整视觉验收 **FAIL/BLOCKED**。
+三条路线的图中都能透出一定背景图案，但只能证明透射/调色存在，不能将其计为真实模糊。原因尚未隔离：这些图像无法区分系统 acrylic 回退、当前窗口宿主组合限制或候选材质设置问题。捕获帧来自 WGC 的 DWM 合成主屏画面，不是显示面板 scanout。
+
+本机报告和逐帧判定：D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\visual\20261023T091558Z\visual-comparison-report.md。该目录在 .local 中并被 Git 忽略；原始捕获没有提交或上传。独立看门狗成功注册 Ctrl+Shift+F12（Win32Error=0），看门狗运行约 46 秒后正常完成；未主动触发急停，因此急停后的端到端路径仍未验证。RestorePassed=true，本轮桌面恢复检查通过。
+
+**结论：本次三条候选的核心材质视觉均 FAIL。** WPF DWM Acrylic 调用成功但没有可见 blur；WinUI Desktop Acrylic 候选也没有可辨真实 blur；SetWindowRgn 候选保住了更明确的圆角剪影，却没有解决 blur 和矩形边缘。不存在可以据此冻结的视觉路线。
 
 ## 4. DPI、尺寸和刷新率
 
@@ -120,7 +126,7 @@ WinUI 默认透明区失败日志表明事件到达覆盖全窗的透明 `Layout
 
 WPF 默认透明路由证据较强，但其独占全屏窗口虽保持 DXGI exclusive，探针采到的前台 PID 是 Dock；不可见本身符合修订后的全屏规则，抢焦点则不符合。WinUI 的 `App.OnLaunched` 显式 `Activate()` 与 Dock 成为前台相符，独占状态同时退出；原因尚未单因素隔离。WinUI tray popup 无法被自动化工具读取不是产品功能失败，命令映射的纯单测 3/3 通过，实际菜单选择仍未验证。
 
-WPF 与 WinUI 都有 opt-in 系统材质候选且通过构建，视觉能力仍未运行时证明。WinUI 的 `SystemBackdropElement` 是更直接的区域级 Desktop Acrylic API；Composition 还提供背景采样后应用模糊等效果的公开路径。这证明 WinUI 有继续实现 blur 的能力，不等于 Liquid Glass 的光学效果已解决。WPF DWM backdrop 对整块 HWND 生效，layered HWND 组合不确定。WPF 官方 Visual Layer interop 可以作为一次有界后备，但 `HwndHost` 的 opacity、clipping、transform 和输入差异会增加成本。**就公开视觉 API 的可达性而言，WinUI 是优先验证对象；整体架构仍无赢家。** 原生 Win32 + DirectComposition 暂不启动；只有公开的 WPF/WinUI Composition 方案经有限验证都无法同时满足输入和玻璃边缘，再评估原生 PoC。
+本轮已运行并审阅三种材质候选各 6 个 WGC 场景；三者均没有可确认的真实 blur，矩形宿主边线仍可见。WinUI 的公开 Composition API 能力仍值得通过一次独立、有限的背景采样/blur/mask PoC 验证，但不能把 API 可达性写成视觉通过。当前结果不证明任一框架整体不可能；WPF DWM backdrop + layered HWND 的本次简单组合已视觉 FAIL，WinUI Desktop Acrylic 配置也视觉 FAIL。WPF Visual Layer/HwndHost 尚未验证且有互操作代价。**现有证据仍不足以确定最终框架。** 原生 Win32 + DirectComposition 暂不启动。
 
 ## 9. 仓库公开与许可证
 
@@ -137,17 +143,19 @@ WPF 与 WinUI 都有 opt-in 系统材质候选且通过构建，视觉能力仍�
 
 ## 10. M0 决策
 
-当前已证实：WPF 默认点击路由 18/18 通过；WinUI 默认透明区 FAIL，但其公开 region 候选在当前限定矩阵中 18/18 通过；两套程序均取得真实 WGC 帧；配置恢复 6/6 通过；普通最大化/无边框共存 4/4 通过；120/240Hz 模式及窗口生存测试通过；DWM 全局计时可被动采集。WinUI tray Show/Exit 路由单测 3/3 通过；应用侧性能分位数统计单测通过。
+已证实：WPF 默认点击路由 18/18 通过；WinUI 默认透明区 FAIL，但其公开 region 输入候选在当前限定矩阵中 18/18 通过；普通最大化/无边框共存 4/4 通过；配置恢复 6/6 通过；120/240Hz 显示模式和窗口生存测试通过；DWM 全局计时可被动读取。WinUI tray Show/Exit 路由单测 3/3 通过；应用侧性能分位数统计单测通过。
 
-仍阻止验收的事项：基线两栈均无目标背景模糊；新增材质 PoC 尚未真实显示/捕获；WPF 在独占全屏时保持 DXGI exclusive 但前台 PID 为 Dock；WinUI 启动后成为前台并使 DXGI exclusive 退出；独占下实际游戏输入与退出后的自动恢复未测；WinUI tray 实际键盘/鼠标选择与辅助功能路径未测；100/150/200% DPI 和多屏未测；应用计时 trace、独立进程 Present 与面板 scanout 未获得；正式许可证继续待权利人决定。当前架构探针代码已有本地和精确 SHA 远程 CI 证据，但没有运行时材质、全屏或 Dock 性能证据。
+本次视觉候选矩阵捕获 18/18、完成审阅 18/18，视觉 PASS 0、FAIL 18。三种候选的真实背景模糊都没有显示出来，矩形宿主边缘仍存在；静态图标内容完整。WPF 的 DWM 属性调用成功不等于视觉 blur 成功。WinUI Desktop Acrylic 已启用但未在当前配置显示可辨 blur；失败原因尚未单独隔离。区域候选的静态圆角剪影当前最清楚，但不满足玻璃材质验收。
 
-**结论：M0 不通过，M1 不开始，技术路线不冻结。** WPF Dock 不可见不是全屏失败，但其成为前台是当前默认行为缺陷；WinUI 默认激活/独占状态变化也是缺陷。非激活启动与系统材质候选只经过编译。硬件缺项不写 PASS，也不自动豁免；A/B/C 分级建议待用户确认后再调整阶段门槛。
+仍阻止验收的事项：三条视觉候选的真实背景模糊与干净边缘均未通过；WPF 在独占全屏时保持 DXGI exclusive 但前台 PID 为 Dock；WinUI 启动后成为前台并使 DXGI exclusive 退出；独占下实际游戏输入与退出后的自动恢复未测；WinUI tray 实际键盘/鼠标选择与辅助功能路径未测；100/150/200% DPI 和多屏未测；应用计时 trace、独立进程 Present 与面板 scanout 未取得；正式许可证继续待权利人决定。当前已完成的视觉捕获不证明应用动画性能。
+
+**结论：M0 不通过，M1 不开始，技术路线不冻结。** 本次视觉 FAIL 不足以判定 WPF 或 WinUI 框架本身不可能；它否定的是当前 WPF layered HWND + DWM backdrop 和当前 WinUI Desktop Acrylic 组合的视觉结果。暂不启动原生 DirectComposition PoC；在重新获批的下一轮中，可将单次 WinUI Composition 背景采样/blur/mask 与 WPF Visual Layer 作为有界候选，按预先定义的停止条件验证。不得在未获得新桌面测试授权时启动新捕获或交互。
 
 ## 11. 主要证据路径
 
 - 输入穿透基线：`D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\input\20261022T153139Z\actual-input-results.csv`
 - WinUI region 输入候选：`D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\input\20261023T033334Z\actual-input-results.csv`
-- 36 张基线 WGC 捕获：`D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\visual\20261022T154558Z\`
+- 36 张基线 WGC 捕获：D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\visual\20261022T154558Z\；本轮 18 场景玻璃候选：D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\visual\20261023T091558Z\
 - WinUI region 候选视觉：`D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\visual\20261023T033440Z\`
 - 最大化/无边框共存：`D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\coexistence\20261022T163228Z\coexistence-results.json`
 - 独占 DXGI：`D:\MacOS\GlassDock-Win\.local\evidence\m0-gap\fullscreen-exclusive\20261023T032605Z\exclusive-fullscreen-results.json`

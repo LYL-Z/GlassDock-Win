@@ -9,12 +9,12 @@
 | M0-03 | 同一数据/几何基线覆盖 8 / 24 项 | Core 单测含 8、24 项样本、布局校验、托盘命令路由与性能分位数逻辑，当前 18/18 通过 | PASS |
 | M0-04 | 44 / 58 / 72 DIP 图标尺寸 | 两候选在 250% DPI 下均完成这些尺寸的 WGC 捕获；尚未完成逐帧几何和视觉审查、其他 DPI 回归 | BLOCKED |
 | M0-05 | Bottom / Left / Right 位置 | 两候选均有三边运行/捕获；三边输入路由的 WinUI region 候选 18/18 通过 | PASS |
-| M0-06 | 透明圆角窗口的 DWM 合成效果 | 基线 36/36 WGC 捕获与 WinUI region 候选 2 帧均成功，但无目标模糊；新增 WinUI `SystemBackdropElement` Acrylic 与 WPF DWM system backdrop 仅编译，未启动/捕获 | BLOCKED |
+| M0-06 | 透明圆角窗口的 DWM 合成效果 | 本轮 WPF DWM Acrylic、WinUI Desktop Acrylic、WinUI Acrylic + SetWindowRgn 共 18/18 WGC 帧成功且标记通过；人工审阅真实模糊 0/18，三候选均保留矩形宿主边缘，报告和逐帧 CSV 位于 .local/evidence/m0-gap/visual/20261023T091558Z/ | FAIL |
 | M0-07 | 透明区点击穿透且 Dock 内容仍可交互 | WPF 默认合成输入 18/18 PASS；WinUI 默认透明区 9/9 FAIL；WinUI `SetWindowRgn` 测试候选 18/18 PASS，但候选视觉和 DPI 长期适配未验收 | FAIL |
 | M0-08 | Dock 中心命中、内容点击/拖动和置顶 | 最大化/无边框窗口及输入探针中两候选 Dock 中心命中并接收内容输入；范围仅为当前环境 | PASS |
 | M0-09 | 100% / 150% / 200% DPI、动态 DPI 和多显示器 | 仅当前 250% DPI 单屏；其他缩放和跨屏迁移未执行 | NOT TESTED |
 | M0-10 | 任务栏、最大化、无边框/独占全屏及恢复 | 最大化/无边框共存 4/4 PASS。全屏默认运行中 WPF 前台 PID 等于 Dock PID；WinUI 前台 PID 等于 Dock PID且 DXGI 独占已退出；真实游戏输入和退出后的自动恢复未测。不可见本身不算失败 | FAIL |
-| M0-11 | 浅/深背景、中心/圆角透射、模糊、边缘和阴影 | 36 张基线帧及 2 张 region 候选帧显示部分透射/阴影、无目标背景模糊；新系统 Acrylic 候选未做真实合成捕获 | FAIL |
+| M0-11 | 浅/深背景、中心/圆角透射、模糊、边缘和阴影 | 本轮 18 个授权场景全部完成人工判读：背景图案透射但仍清晰、无可确认 blur；三候选均有矩形宿主边线；静态图标完整。像素级抗锯齿和动态外溢未测。原帧仅在 D 盘 .local | FAIL |
 | M0-12 | 60 / 120 / 240Hz 显示模式适配 | 当前设备 120/240Hz 模式切换和候选窗口生存有通过记录；120Hz 后独立看门狗恢复至 240Hz；当前分辨率不支持 60Hz | PASS |
 | M0-13 | CPU / 内存资源测量 | 既有 PoC 静态 idle 样本仅作限定性 PASS；新应用计时器现可分 Idle/Animation 每秒记录进程 CPU、working set、private bytes，但未运行新 trace | BLOCKED |
 | M0-14 | GPU 利用率及 GPU 内存测量 | 本轮记录器明确输出 null/未测；没有有效 GPU utilization / GPU memory 数据 | NOT TESTED |
@@ -33,12 +33,14 @@
 | M0-27 | WinUI 公开 HWND region 输入候选 | `SetWindowRgn` opt-in 变体三边 18/18 事件测试通过，Bottom / 58 DIP / 浅深 2 帧成功捕获；边缘/shadow/DPI 仍未充分验收 | PASS |
 | M0-28 | 真正 DXGI 独占全屏与 Dock 共存 | 允许 Dock 在 DXGI 独占期间隐藏。记录显示 WPF 前台进程为 Dock PID；WinUI 前台为 Dock 且 DXGI 独占退出。故默认启动路径对“不抢焦点/不影响独占”为 FAIL；WPF 实际输入拦截和退出后自动恢复仍 BLOCKED | FAIL |
 | M0-29 | 本轮 M0 缺口补测代码/脚本的远程 CI | 提交 `8be36ea111e35875dbc3ff8cab96474a36e6d413` 的 [Windows CI run 39896333410](https://github.com/LYL-Z/GlassDock-Win/actions/runs/39896333410) Build/Test 均成功；Build 0 警告/0 错误，Core 11/11；仅 Actions runtime 弃用提示 | PASS |
-| M0-30 | 当前视觉候选、非激活启动候选和应用侧遥测代码 | 提交 `8f6ca23ecb159dd20e71e0ef303a691cda9293ab` 本地 Release build 11 项目通过、Core 18/18，远程 run `39924864083` Build/Test 均成功；候选未启动，未生成新视觉捕获、全屏运行或性能 trace | BLOCKED |
+| M0-30 | 候选代码构建与非交互单测 | 当前候选本地 Release build 11 项目通过、Core 18/18；精确 SHA 8f6ca23ecb159dd20e71e0ef303a691cda9293ab 远程 Windows CI Build/Test 成功。运行时视觉由 M0-32 单独评定 | PASS |
 | M0-31 | 本轮架构探针精确 SHA 远程 CI | `8f6ca23ecb159dd20e71e0ef303a691cda9293ab` 的 [Windows CI run 39924864083](https://github.com/LYL-Z/GlassDock-Win/actions/runs/39924864083)；workflow、build-and-test job、Build、Test 均 completed/success | PASS |
+| M0-32 | 三路线 18 场景玻璃视觉捕获与判读 | 用户以约定短语授权后，WGC 捕获 18/18；人工判读 0/18 visual pass、18/18 visual fail。所有场景背景图案仍清晰、矩形宿主边线可见；静态内容完整。证据 .local/evidence/m0-gap/visual/20261023T091558Z/visual-comparison-report.md 与 visual-assessment.csv | FAIL |
+| M0-33 | 非激活启动及 Dock 自身实际性能 trace | 候选代码已实现但本轮没有运行非激活启动或 Dock trace；无 Dock P50/P95/P99 运行数据，仍需独立授权和按原安全边界执行 | BLOCKED |
 
 ## 验收结论
 
-M0 未通过，M1 不开始，技术路线不冻结。输入证据由 `SendInput` 合成，并以 Dock 事件和独立下层窗口消息确认接收方；不是物理鼠标验收。视觉图像由 Windows.Graphics.Capture 捕获；截图状态 PASS 只代表捕获成功。DWM 数值只代表全局合成时序。新增系统材质和 non-activating 候选只经过编译，不能写作功能通过。当前 250% 单屏结果不外推至其他 DPI、多显示器或设备。
+M0 未通过，M1 不开始，技术路线不冻结。输入证据由 `SendInput` 合成，并以 Dock 事件和独立下层窗口消息确认接收方；不是物理鼠标验收。视觉图像由 Windows.Graphics.Capture 捕获；截图状态 PASS 只代表捕获成功。DWM 数值只代表全局合成时序。系统材质候选已完成本轮 WGC 捕获并视觉 FAIL；non-activating 启动仍只经过编译，不能写作功能通过。当前 250% 单屏结果不外推至其他 DPI、多显示器或设备。
 
 ## 建议的 A / B / C 后续分级（等待用户确认）
 
