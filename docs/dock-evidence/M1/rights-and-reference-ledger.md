@@ -6,6 +6,7 @@
 |---|---|---|---|---|
 | Apple Dock 用户指南与 HIG | Apple 官方网站，见 [官方资料笔记](official-reference-notes-2026-10-23.md) | 仅作事实核对；仓库内是短摘要和链接 | 没有复制页面截图或长段原文；研究引用不授予素材权 | 发行文档只保留必要引用和来源；遵守页面条款 |
 | Apple/macOS 应用图标、Dock 图像、品牌标志、系统界面截图 | Apple 或对应软件权利人 | 未导入、未打包 | **未获项目再分发授权；不用于发行资产** | 使用前逐项核查授权、商标和允许的用途；不能核实则换成原创占位资源 |
+| Apple 官方文档中的系统图像名称及 Dock 语义 | Apple Developer Documentation / Apple Support | 仅保留链接、来源编号和简短事实摘要；未下载图像数据 | 引用不授予图像或商标再分发权 | 可继续用于内部研究；任何图像导出、截图发布或随包分发均须另行审权 |
 | Apple Design Resources 官方资源包 | Apple Inc.；[许可文本](https://developer.apple.com/support/downloads/terms/apple-design-resources/Apple-Design-Resources-License-20230621-English.pdf) | 未下载、未使用 | 许可条款将授权用途限定在仅运行 Apple 操作系统的软件界面 mockup，并限制嵌入与再分发；当前 Windows 项目不把该包作为视觉/产品资产来源 | 不用于 Windows 产品 mockup 或安装包，除非取得明确适用的书面许可；本条是对当前公开许可文本的范围摘要 |
 | 第三方应用图标/名称/商标 | 各应用权利人 | 规格中只描述类别，未复制图像 | **未逐项审查** | 每个图标记录来源、许可、署名及发行权；无明确许可不随包分发 |
 | Windows/开源图标素材 | 对应作者或素材库 | 当前没有新增素材包 | **尚未选型** | 选用时记录版本、许可证、NOTICE/署名义务和再分发条款 |
