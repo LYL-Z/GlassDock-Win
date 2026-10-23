@@ -5,6 +5,7 @@
     <RootNamespace>GlassDock.Persistence</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="..\GlassDock.App\GlassDock.App.csproj" />
     <ProjectReference Include="..\GlassDock.Core\GlassDock.Core.csproj" />
   </ItemGroup>
 </Project>

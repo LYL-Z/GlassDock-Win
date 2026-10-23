@@ -1,0 +1,91 @@
+<Window x:Class="GlassDock.Experimental.Wpf.DockWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="GlassDock Experimental"
+        Width="980" Height="170"
+        MinWidth="420" MinHeight="148"
+        WindowStyle="None" ResizeMode="NoResize"
+        AllowsTransparency="True" Background="Transparent"
+        ShowInTaskbar="False" Topmost="False"
+        WindowStartupLocation="Manual"
+        PreviewKeyDown="Window_PreviewKeyDown"
+        Loaded="Window_Loaded"
+        Closed="Window_Closed">
+    <Window.Resources>
+        <Style x:Key="ToolbarButton" TargetType="Button">
+            <Setter Property="Foreground" Value="#FFF3F5FA" />
+            <Setter Property="Background" Value="#263B4250" />
+            <Setter Property="BorderBrush" Value="#44FFFFFF" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="11,5" />
+            <Setter Property="Margin" Value="4,0,0,0" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ButtonBorder" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="12" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#46515F70" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Opacity" Value="0.72" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#FF85C7FF" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Border x:Name="Backplate" Margin="18,14,18,20" Padding="16,10"
+            CornerRadius="26" Background="#E81B1F28"
+            BorderBrush="#42FFFFFF" BorderThickness="1"
+            SnapsToDevicePixels="True">
+        <Border.Effect>
+            <DropShadowEffect Color="#A0000000" BlurRadius="22" ShadowDepth="8" Opacity="0.48" />
+        </Border.Effect>
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="8" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <DockPanel Grid.Row="0" LastChildFill="True">
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button x:Name="PositionButton" Style="{StaticResource ToolbarButton}"
+                            Content="Position: Bottom" Click="PositionButton_Click"
+                            AutomationProperties.Name="Choose Dock position" />
+                    <Button Style="{StaticResource ToolbarButton}" Content="+ Apps"
+                            Click="AddAppsButton_Click" AutomationProperties.Name="Add applications to Dock"
+                            ToolTip="Search discovered Windows applications and pin one. Ctrl+O" />
+                </StackPanel>
+                <StackPanel Orientation="Vertical">
+                    <TextBlock Text="GLASSDOCK  /  EXPERIMENTAL WPF HOST"
+                               Foreground="#FFE6EBF5" FontSize="11" FontWeight="SemiBold"
+                               AutomationProperties.Name="GlassDock experimental host" />
+                    <TextBlock Text="Translucent prototype · desktop blur not implemented · not production window management"
+                               Foreground="#FFB3BDCC" FontSize="10" Margin="0,2,0,0" />
+                </StackPanel>
+            </DockPanel>
+            <ScrollViewer x:Name="SectionsScrollViewer" Grid.Row="2"
+                          HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
+                          CanContentScroll="False" Focusable="False">
+                <StackPanel x:Name="SectionsHost" Orientation="Horizontal" VerticalAlignment="Center" />
+            </ScrollViewer>
+            <TextBlock x:Name="StatusLabel" Grid.Row="3" Margin="2,4,2,0"
+                       Foreground="#FFB3BDCC" FontSize="9" TextTrimming="CharacterEllipsis"
+                       AutomationProperties.LiveSetting="Polite" />
+        </Grid>
+    </Border>
+</Window>

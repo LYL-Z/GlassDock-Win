@@ -10,6 +10,7 @@ public interface IWindowsShellCommandBackend
 {
     DockCommandResult LaunchAppUserModelId(string appUserModelId);
     DockCommandResult LaunchShellLink(string shellLinkPath);
+    DockCommandResult LaunchExecutable(string executablePath);
     DockCommandResult OpenPath(string path);
     bool TryFindApplicationWindow(DockTargetIdentity identity, out IntPtr windowHandle);
     bool TrySetForegroundWindow(IntPtr windowHandle);
@@ -73,12 +74,16 @@ public sealed class WindowsShellCommandExecutor
             _backend.LaunchShellLink(identity.Value),
         DockIdentityScheme.WindowsAppUserModelId => _backend.LaunchAppUserModelId(identity.ComparisonKey),
         DockIdentityScheme.WindowsShellLinkPath => _backend.LaunchShellLink(identity.Value),
+        DockIdentityScheme.WindowsSystemRole when IsFileManagerRole(identity) =>
+            _backend.LaunchExecutable(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe")),
         _ => new DockCommandResult(DockCommandOutcome.Unsupported, "launch-target-scheme-unsupported")
     };
 
     private DockCommandResult Activate(DockTargetIdentity identity)
     {
-        if (identity.Scheme is not (DockIdentityScheme.WindowsAppUserModelId or DockIdentityScheme.WindowsShellLinkPath))
+        if (identity.Scheme is not (DockIdentityScheme.WindowsAppUserModelId
+            or DockIdentityScheme.WindowsShellLinkPath or DockIdentityScheme.WindowsSystemRole)
+            || (identity.Scheme == DockIdentityScheme.WindowsSystemRole && !IsFileManagerRole(identity)))
             return new DockCommandResult(DockCommandOutcome.Unsupported, "activate-target-scheme-unsupported");
 
         if (identity.Scheme == DockIdentityScheme.WindowsShellLinkPath
@@ -123,6 +128,10 @@ public sealed class WindowsShellCommandExecutor
             return true;
         }
     }
+
+    private static bool IsFileManagerRole(DockTargetIdentity identity) =>
+        string.Equals(identity.Value, "windows.file-manager", StringComparison.OrdinalIgnoreCase)
+        && string.Equals(identity.ComparisonKey, "windows.file-manager", StringComparison.OrdinalIgnoreCase);
 }
 
 /// <summary>Native, non-elevated Windows Shell command backend.</summary>
@@ -158,6 +167,8 @@ public sealed class WindowsShellCommandBackend : IWindowsShellCommandBackend
 
     public DockCommandResult LaunchShellLink(string shellLinkPath) => ExecuteShellVerb(shellLinkPath);
 
+    public DockCommandResult LaunchExecutable(string executablePath) => ExecuteShellVerb(executablePath);
+
     public DockCommandResult OpenPath(string path) => ExecuteShellVerb(path);
 
     public bool TryFindApplicationWindow(DockTargetIdentity identity, out IntPtr windowHandle)
@@ -166,6 +177,8 @@ public sealed class WindowsShellCommandBackend : IWindowsShellCommandBackend
         NativeMethods.EnumWindows((window, _) =>
         {
             if (!NativeMethods.IsWindowVisible(window))
+                return true;
+            if (identity.Scheme == DockIdentityScheme.WindowsSystemRole && !IsFileManagerWindow(window))
                 return true;
 
             NativeMethods.GetWindowThreadProcessId(window, out var processId);
@@ -190,6 +203,15 @@ public sealed class WindowsShellCommandBackend : IWindowsShellCommandBackend
     public bool TrySetForegroundWindow(IntPtr windowHandle) =>
         windowHandle != IntPtr.Zero && NativeMethods.SetForegroundWindow(windowHandle);
 
+    private static bool IsFileManagerWindow(IntPtr window)
+    {
+        var className = new StringBuilder(256);
+        var length = NativeMethods.GetClassNameW(window, className, className.Capacity);
+        var name = length > 0 ? className.ToString() : string.Empty;
+        return string.Equals(name, "CabinetWClass", StringComparison.Ordinal)
+            || string.Equals(name, "ExploreWClass", StringComparison.Ordinal);
+    }
+
     private static bool MatchesProcess(uint processId, DockTargetIdentity identity)
     {
         using var process = NativeMethods.OpenProcess(ProcessQueryLimitedInformation, false, processId);
@@ -206,6 +228,15 @@ public sealed class WindowsShellCommandBackend : IWindowsShellCommandBackend
             queryResult = NativeMethods.GetApplicationUserModelId(process, ref length, appUserModelId);
             return queryResult == 0
                 && string.Equals(appUserModelId.ToString(), identity.ComparisonKey, StringComparison.OrdinalIgnoreCase);
+        }
+
+        if (identity.Scheme == DockIdentityScheme.WindowsSystemRole)
+        {
+            if (!string.Equals(identity.ComparisonKey, "windows.file-manager", StringComparison.OrdinalIgnoreCase))
+                return false;
+            var windowsDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+            return !string.IsNullOrWhiteSpace(windowsDirectory)
+                && MatchesExecutablePath(process, Path.Combine(windowsDirectory, "explorer.exe"));
         }
 
         if (identity.Scheme != DockIdentityScheme.WindowsShellLinkPath)
@@ -230,13 +261,20 @@ public sealed class WindowsShellCommandBackend : IWindowsShellCommandBackend
             return false;
         }
 
+        return MatchesExecutablePath(process, expectedPath);
+    }
+
+    private static bool MatchesExecutablePath(SafeProcessHandle process, string expectedPath)
+    {
         var pathBuffer = new StringBuilder(32768);
         var pathLength = (uint)pathBuffer.Capacity;
         if (!NativeMethods.QueryFullProcessImageNameW(process, 0, pathBuffer, ref pathLength))
             return false;
         return WindowsStartMenuApplicationDiscovery.FileIdentityResolver.TryGetCanonicalPath(
             pathBuffer.ToString(), out var actualPath, out _)
-            && StringComparer.OrdinalIgnoreCase.Equals(actualPath, expectedPath);
+            && WindowsStartMenuApplicationDiscovery.FileIdentityResolver.TryGetCanonicalPath(
+                expectedPath, out var canonicalExpectedPath, out _)
+            && StringComparer.OrdinalIgnoreCase.Equals(actualPath, canonicalExpectedPath);
     }
 
     private static DockCommandResult ExecuteShellVerb(string path)
@@ -346,6 +384,9 @@ public sealed class WindowsShellCommandBackend : IWindowsShellCommandBackend
         [DllImport("user32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
         public static extern bool IsWindowVisible(IntPtr window);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern int GetClassNameW(IntPtr window, [Out] StringBuilder className, int maxCount);
 
         [DllImport("user32.dll")]
         public static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
