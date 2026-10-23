@@ -140,17 +140,18 @@ V0.1 完成一次 46 行完整性、来源实质性、依赖方向和验收可�
 | `src/GlassDock.Core/DockModels.cs` | 保留 M0 UI 演示用 `DockItem(Id, Label, Glyph, AccentHex)` 和 8/24 占位项 | 不作为持久化产品对象；实际状态由新增 `DockProjectState.cs` 表示，图标解析仍待 Shell/UI adapter |
 | `src/GlassDock.Core/DockProjectState.cs` | M2 新增：稳定 GUID 项目 ID、提供方规范身份比较键、三分区不可变状态、固定/近期去重、最多三项真实观察近期记录、排序与偏好转换；默认 Explorer/底部/FollowSystem/近期启用但列表为空 | 不解析真实 Windows 身份，不访问系统近期记录；Activity 只能由后续真实 observer 提供；没有文件操作或 UI |
 | `src/GlassDock.Core/DockCommands.cs` | M2 新增：Launch/Activate/Open 命令意图和完成/拒绝/失败结果类型 | 没有 Shell/进程启动、HWND 激活或焦点改变实现 |
-| `src/GlassDock.Core/DockConfigurationJson.cs` | M2 新增：JSON schema v3、从项目内兼容格式 v1/v2 迁移、缺失配置默认、无效/未知/超大数据恢复与诊断 | v1/v2 是兼容格式测试输入，不表示曾正式发布；只做内存序列化/反序列化，不选择用户配置路径、不写文件；原子保存与有界磁盘备份由下一独立存储 PR 实现 |
+| `src/GlassDock.Core/DockConfigurationJson.cs` | M2 新增：JSON schema v3、从项目内兼容格式 v1/v2 迁移、缺失配置默认、无效/未知/超大数据恢复与诊断 | v1/v2 是兼容格式测试输入，不表示曾正式发布；只做内存序列化/反序列化，不选择用户配置路径、不写文件；磁盘 I/O 由独立 Persistence 组件负责 |
+| `src/GlassDock.Persistence/DockConfigurationFileStore.cs` | M2 新增：显式目录下的有界 UTF-8 读写、同目录临时文件与 flush、主文件替换、两代备份、损坏时只读回退、权限/IO 结果分类；同进程同目录的读写串行化 | 不决定实际用户配置目录、不自动覆盖损坏主文件；尚未验证断电/硬件故障持久性或跨进程并发；权限拒绝由可注入文件操作模拟，未改系统 ACL |
 | `src/GlassDock.Core/DockLayout.cs` | 给定工作区、Dock 外框尺寸和边缘，计算 Bottom/Left/Right 外框位置并验证输入 | 每个项目的布局、DIP/像素换算、多显示器拓扑、碰撞和动画命中模型 |
 | `src/GlassDock.Core/DockTrayCommandRouter.cs` | 纯函数式 Show/Exit 命令路由 | 完整菜单模型、命令状态/错误反馈及窗口系统行为 |
 | `src/GlassDock.Core/DockPerformanceRecorder.cs` | 逻辑更新时间、框架渲染回调间隔和动画时长的分布采样 | GPU 提交、DWM 呈现、物理 scanout、进程资源、应用身份和长时采样宿主 |
 | `src/GlassDock.App/IDockWindowHost.cs`、`IRenderBackend.cs` | 最小窗口宿主和渲染器接口 | 生产宿主、接口能力边界和最终渲染后端；受 M0 NO-GO 限制 |
-| `tests/GlassDock.Core.Tests/` | 既有外框、占位项、托盘路由和性能采样测试；M2 新增状态、身份、最近项、排序、JSON 迁移/恢复及命令契约单测；PR #1 复审后的本地 Release 结果 45/45 通过，完整解决方案 Release 构建 0 警告/0 错误 | 不包含真实 Shell、桌面焦点、应用启动、文件删除或窗口交互验证 |
+| `tests/GlassDock.Core.Tests/`、`tests/GlassDock.Persistence.Tests/` | Core 状态/身份/近期项/排序/JSON 迁移/恢复/命令契约单测 45/45；隔离磁盘存储测试 8/8；完整解决方案 Release 构建 0 警告/0 错误 | 存储测试只写本地仓库忽略目录 `.local/test-data`，不接触用户配置；中断写入和权限拒绝是确定性故障注入，不是断电或真实 ACL 实验 |
 
 M2 第一批已开始。剩余 Core/集成工作包按下列边界继续排期，不把已授权的纯逻辑扩大成 Shell 或桌面操作：
 
 1. **M2 Core 第一批收尾：** 修复构建/测试发现的问题，锁定 serializer migration 与状态不变量，确保所有旧 Core 回归测试继续通过。
-2. **M2 配置存储适配器：** 后续实现有界的原子文件保存与备份/恢复策略；写入仅限应用自己的配置目录，不扫描用户文件。
+2. **M2 配置存储适配器：** PR #2 实现了显式目录的原子替换候选、有界双备份与只读恢复；正式安装版路径仍待产品发布配置。建议届时使用 `%LOCALAPPDATA%\GlassDock-Win\` 下的应用专属子目录，因配置包含设备偏好、应用引用与本地近期状态而不适合漫游；本建议尚未应用到运行代码，也不改变当前开发一律在 D 盘的约束。生产接入前需确定跨进程单实例策略及目标文件系统语义。
 3. **M6/M7 Shell 身份和命令 provider：** 解析 AppUserModelID、Package Family、Shell shortcut、Known Folder 和 system role；真实运行时观察近期 App；在单独批准后接入 Launch/Open/Activate。
 4. **M3/M9 窗口宿主与任务栏共存：** 受 M0 NO-GO、焦点和桌面授权门槛约束，不从当前 Core PR 偷渡实现。
 5. **M4/M5 主题、材质和动画：** 遵守 M0 未冻结渲染路线；保留 FollowSystem/Light/Dark Core 设置契约，不把材质参数写成实测。
