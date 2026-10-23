@@ -52,7 +52,20 @@ public sealed record DockCommand
 /// <summary>
 /// Result returned by a future command adapter. Core does not launch, activate, or open targets.
 /// </summary>
-public sealed record DockCommandResult(DockCommandOutcome Outcome, string? DiagnosticCode = null)
+public sealed record DockCommandResult
 {
+    public DockCommandResult(DockCommandOutcome outcome, string? diagnosticCode = null)
+    {
+        if (!Enum.IsDefined(outcome))
+            throw new ArgumentOutOfRangeException(nameof(outcome));
+
+        Outcome = outcome;
+        DiagnosticCode = diagnosticCode;
+    }
+
+    public DockCommandOutcome Outcome { get; }
+
+    public string? DiagnosticCode { get; }
+
     public bool IsCompleted => Outcome == DockCommandOutcome.Completed;
 }

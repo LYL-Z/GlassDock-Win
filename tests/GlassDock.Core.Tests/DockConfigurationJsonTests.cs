@@ -26,6 +26,25 @@ public sealed class DockConfigurationJsonTests
         }
         """;
 
+    private const string Version2Configuration = """
+        {
+          "schemaVersion": 2,
+          "preferences": { "edge": "left", "showRecentApplications": false, "appearance": "dark" },
+          "pinnedApplications": [
+            {
+              "id": "11111111-1111-1111-1111-111111111111",
+              "kind": "application",
+              "displayName": "Editor",
+              "identityScheme": "windowsAppUserModelId",
+              "identityValue": "Contoso.Editor",
+              "lastUsedUtc": null
+            }
+          ],
+          "recentApplications": [],
+          "filesAndFolders": []
+        }
+        """;
+
     [TestMethod]
     public void SerializeRoundTripsSectionsStableIdsOrderAndPreferences()
     {
@@ -42,7 +61,7 @@ public sealed class DockConfigurationJsonTests
             DockProjectItemKind.Folder,
             DockSection.FilesAndFolders,
             "Downloads",
-            DockTargetIdentity.Create(DockIdentityScheme.WindowsKnownFolderId, "Downloads"))).State;
+            DockTargetIdentity.Create(DockIdentityScheme.WindowsKnownFolderId, "Downloads", "FOLDERID_Downloads"))).State;
         state = state.SetAppearance(DockAppearancePreference.Dark).State;
         state = state.SetEdge(DockEdge.Right).State;
 
@@ -62,10 +81,12 @@ public sealed class DockConfigurationJsonTests
             result.State.RecentApplications.Select(item => item.Id.ToString()).ToArray());
         CollectionAssert.AreEqual(state.FilesAndFolders.Select(item => item.Id.ToString()).ToArray(),
             result.State.FilesAndFolders.Select(item => item.Id.ToString()).ToArray());
+        Assert.AreEqual(state.FilesAndFolders.Single().TargetIdentity.ComparisonKey,
+            result.State.FilesAndFolders.Single().TargetIdentity.ComparisonKey);
     }
 
     [TestMethod]
-    public void Version1MigratesToVersion2AndAddsFollowSystemAppearance()
+    public void Version1MigratesToVersion3AndAddsFollowSystemAppearance()
     {
         var result = DockConfigurationJson.Deserialize(Version1Configuration);
 
@@ -74,9 +95,22 @@ public sealed class DockConfigurationJsonTests
         Assert.IsFalse(result.State.Preferences.ShowRecentApplications);
         Assert.AreEqual(DockAppearancePreference.FollowSystem, result.State.Preferences.Appearance);
         Assert.AreEqual("Editor", result.State.PinnedApplications.Single().DisplayName);
+        Assert.AreEqual("Contoso.Editor", result.State.PinnedApplications.Single().TargetIdentity.ComparisonKey);
 
         using var migratedDocument = JsonDocument.Parse(DockConfigurationJson.Serialize(result.State));
-        Assert.AreEqual(2, migratedDocument.RootElement.GetProperty("schemaVersion").GetInt32());
+        Assert.AreEqual(3, migratedDocument.RootElement.GetProperty("schemaVersion").GetInt32());
+    }
+
+    [TestMethod]
+    public void Version2MigratesAndPreservesAppearanceWithValueAsComparisonKey()
+    {
+        var result = DockConfigurationJson.Deserialize(Version2Configuration);
+
+        Assert.AreEqual(DockConfigurationLoadStatus.MigratedFromVersion2, result.Status);
+        Assert.AreEqual(DockAppearancePreference.Dark, result.State.Preferences.Appearance);
+        Assert.AreEqual("Contoso.Editor", result.State.PinnedApplications.Single().TargetIdentity.ComparisonKey);
+        Assert.AreEqual(DockConfigurationLoadStatus.LoadedCurrentVersion,
+            DockConfigurationJson.Deserialize(DockConfigurationJson.Serialize(result.State)).Status);
     }
 
     [TestMethod]
@@ -151,6 +185,24 @@ public sealed class DockConfigurationJsonTests
             DockConfigurationJson.Deserialize(invalidEnum).Status);
         Assert.AreEqual(DockConfigurationLoadStatus.RecoveredInvalidData,
             DockConfigurationJson.Deserialize(missingCollection).Status);
+
+        const string missingIdentityFields = """
+            { "schemaVersion": 3, "preferences": { "edge": "bottom", "showRecentApplications": true, "appearance": "followSystem" }, "pinnedApplications": [ { "id": "11111111-1111-1111-1111-111111111111", "kind": "application", "displayName": "Editor", "identityScheme": "windowsAppUserModelId", "identityValue": "Contoso.Editor" } ], "recentApplications": [], "filesAndFolders": [] }
+            """;
+        Assert.AreEqual(DockConfigurationLoadStatus.RecoveredInvalidData,
+            DockConfigurationJson.Deserialize(missingIdentityFields).Status);
+    }
+
+    [TestMethod]
+    public void OversizedConfigurationIsRejectedBeforeJsonParsing()
+    {
+        var oversized = new string(' ', DockConfigurationJson.MaximumConfigurationCharacters + 1);
+        var result = DockConfigurationJson.Deserialize(oversized);
+
+        Assert.AreEqual(DockConfigurationLoadStatus.RecoveredInvalidData, result.Status);
+        Assert.AreEqual("ConfigurationTooLarge", result.DiagnosticCode);
+        Assert.IsTrue(result.RequiresRecovery);
+        Assert.AreEqual(1, result.State.PinnedApplications.Count);
     }
 
     private static DockTargetIdentity AppIdentity(string value) =>

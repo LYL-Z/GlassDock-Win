@@ -43,4 +43,10 @@ public sealed class DockCommandsTests
             DockItemId.FromGuid(Guid.NewGuid()),
             DockTargetIdentity.Create(DockIdentityScheme.WindowsAppUserModelId, "Contoso.Editor")));
     }
+
+    [TestMethod]
+    public void InvalidCommandOutcomeCannotBeReported()
+    {
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => new DockCommandResult((DockCommandOutcome)99));
+    }
 }

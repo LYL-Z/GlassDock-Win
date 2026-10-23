@@ -66,7 +66,7 @@ public readonly record struct DockItemId
 
     internal static DockItemId ForRecentTarget(DockTargetIdentity identity)
     {
-        var input = Encoding.UTF8.GetBytes($"{(int)identity.Scheme}\0{identity.Value}");
+        var input = Encoding.UTF8.GetBytes($"{(int)identity.Scheme}\0{identity.StableComparisonValue}");
         var hash = SHA256.HashData(input);
         return new DockItemId(new Guid(hash.AsSpan(0, 16)));
     }
@@ -74,31 +74,68 @@ public readonly record struct DockItemId
     public override string ToString() => Value.ToString("D");
 }
 
-public readonly record struct DockTargetIdentity
+/// <summary>
+/// Identifies a target using a provider-resolved comparison key. Value is the locator retained
+/// for a future Shell adapter; ComparisonKey is the identity provider's canonical key. Core does
+/// not resolve path aliases or lowercase arbitrary Windows identifiers.
+/// </summary>
+public readonly struct DockTargetIdentity : IEquatable<DockTargetIdentity>
 {
-    private DockTargetIdentity(DockIdentityScheme scheme, string value)
+    private DockTargetIdentity(DockIdentityScheme scheme, string value, string comparisonKey)
     {
         Scheme = scheme;
         Value = value;
+        ComparisonKey = comparisonKey;
     }
 
     public DockIdentityScheme Scheme { get; }
 
     public string Value { get; }
 
-    public bool IsValid => Enum.IsDefined(Scheme) && !string.IsNullOrWhiteSpace(Value);
+    /// <summary>Canonical identity key supplied by a future Windows identity provider.</summary>
+    public string ComparisonKey { get; }
+
+    public bool IsValid => Enum.IsDefined(Scheme)
+        && !string.IsNullOrWhiteSpace(Value)
+        && !Value.Contains('\0')
+        && !string.IsNullOrWhiteSpace(ComparisonKey)
+        && !ComparisonKey.Contains('\0');
+
+    internal string StableComparisonValue => Scheme is DockIdentityScheme.WindowsAppUserModelId
+        or DockIdentityScheme.WindowsPackageFamilyName
+            ? ComparisonKey.ToUpperInvariant()
+            : ComparisonKey;
 
     public static DockTargetIdentity Create(DockIdentityScheme scheme, string value)
+        => Create(scheme, value, value);
+
+    public static DockTargetIdentity Create(DockIdentityScheme scheme, string value, string comparisonKey)
     {
         if (!Enum.IsDefined(scheme))
             throw new ArgumentOutOfRangeException(nameof(scheme));
         ArgumentException.ThrowIfNullOrWhiteSpace(value);
-        var normalized = value.Trim();
-        if (normalized.Contains('\0'))
+        ArgumentException.ThrowIfNullOrWhiteSpace(comparisonKey);
+        if (value.Contains('\0') || comparisonKey.Contains('\0'))
             throw new ArgumentException("Target identity cannot contain a null character.", nameof(value));
 
-        return new DockTargetIdentity(scheme, normalized);
+        return new DockTargetIdentity(scheme, value, comparisonKey);
     }
+
+    public bool Equals(DockTargetIdentity other) => Scheme == other.Scheme
+        && ComparerFor(Scheme).Equals(ComparisonKey, other.ComparisonKey);
+
+    public override bool Equals(object? obj) => obj is DockTargetIdentity other && Equals(other);
+
+    public override int GetHashCode() => HashCode.Combine(Scheme, ComparerFor(Scheme).GetHashCode(ComparisonKey ?? string.Empty));
+
+    public static bool operator ==(DockTargetIdentity left, DockTargetIdentity right) => left.Equals(right);
+
+    public static bool operator !=(DockTargetIdentity left, DockTargetIdentity right) => !left.Equals(right);
+
+    private static StringComparer ComparerFor(DockIdentityScheme scheme) => scheme is DockIdentityScheme.WindowsAppUserModelId
+        or DockIdentityScheme.WindowsPackageFamilyName
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
 }
 
 public sealed record DockProjectItem
@@ -150,17 +187,9 @@ public sealed record DockProjectItem
 
     public DateTimeOffset? LastUsedUtc { get; }
 
-    internal DockProjectItem AsPinnedApplication() => new(
-        Id,
-        Kind,
-        DockSection.PinnedApplications,
-        DisplayName,
-        TargetIdentity);
-
     private static bool IdentitySupportsKind(DockProjectItemKind kind, DockIdentityScheme scheme) => kind switch
     {
         DockProjectItemKind.Application => scheme is DockIdentityScheme.WindowsAppUserModelId
-            or DockIdentityScheme.WindowsPackageFamilyName
             or DockIdentityScheme.WindowsShellLinkPath,
         DockProjectItemKind.File => scheme == DockIdentityScheme.WindowsCanonicalPath,
         DockProjectItemKind.Folder => scheme is DockIdentityScheme.WindowsCanonicalPath or DockIdentityScheme.WindowsKnownFolderId,
@@ -220,7 +249,7 @@ public sealed record DockRecentActivity
     public DockRecentActivity(DockTargetIdentity targetIdentity, string displayName, DateTimeOffset observedAt)
     {
         if (!targetIdentity.IsValid || targetIdentity.Scheme is not (DockIdentityScheme.WindowsAppUserModelId
-            or DockIdentityScheme.WindowsPackageFamilyName or DockIdentityScheme.WindowsShellLinkPath))
+            or DockIdentityScheme.WindowsShellLinkPath))
             throw new ArgumentException("Recent activity requires a stable application identity.", nameof(targetIdentity));
         ArgumentException.ThrowIfNullOrWhiteSpace(displayName);
 
@@ -338,7 +367,12 @@ public sealed class DockState
         if (ContainsId(item.Id) && recentMatch?.Id != item.Id)
             return new DockStateMutation(this, DockStateChange.InvalidItem);
 
-        var pinned = item.AsPinnedApplication();
+        var pinned = new DockProjectItem(
+            recentMatch?.Id ?? item.Id,
+            item.Kind,
+            DockSection.PinnedApplications,
+            item.DisplayName,
+            item.TargetIdentity);
         var recent = _recentApplications.Where(existing => existing.TargetIdentity != item.TargetIdentity).ToArray();
         return new DockStateMutation(
             new DockState(_pinnedApplications.Append(pinned), recent, _filesAndFolders, Preferences),
@@ -479,7 +513,18 @@ public sealed class DockState
         var recents = _recentApplications
             .Where(item => item.TargetIdentity != activity.TargetIdentity)
             .ToList();
-        var insertionIndex = recents.FindIndex(item => item.LastUsedUtc!.Value <= activity.ObservedAtUtc);
+        // Keep the existing order for equal timestamps. A repeated observation with the same
+        // timestamp refreshes metadata in place; a new/newer item is inserted after existing ties.
+        if (existing is not null && activity.ObservedAtUtc == existing.LastUsedUtc!.Value)
+        {
+            var stable = _recentApplications.ToArray();
+            stable[existingIndex] = recentItem;
+            return new DockStateMutation(
+                new DockState(_pinnedApplications, stable, _filesAndFolders, Preferences),
+                DockStateChange.RecordedRecentActivity);
+        }
+
+        var insertionIndex = recents.FindIndex(item => item.LastUsedUtc!.Value < activity.ObservedAtUtc);
         if (insertionIndex < 0)
             recents.Add(recentItem);
         else

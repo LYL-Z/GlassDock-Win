@@ -29,12 +29,44 @@ public sealed class DockProjectStateTests
         var packageIdentity = DockTargetIdentity.Create(
             DockIdentityScheme.WindowsPackageFamilyName,
             "Contoso.Editor_12345abcde");
-        var app = Application(Guid.NewGuid(), packageIdentity, "Editor");
 
-        Assert.AreEqual(DockIdentityScheme.WindowsPackageFamilyName, app.TargetIdentity.Scheme);
+        Assert.AreEqual(DockIdentityScheme.WindowsPackageFamilyName, packageIdentity.Scheme);
+        Assert.AreEqual(packageIdentity, DockTargetIdentity.Create(
+            DockIdentityScheme.WindowsPackageFamilyName, "CONTOSO.EDITOR_12345ABCDE"));
+        Assert.ThrowsExactly<ArgumentException>(() => Application(Guid.NewGuid(), packageIdentity, "Package family"));
         Assert.IsFalse(Enum.GetNames<DockIdentityScheme>().Contains("ProcessName", StringComparer.Ordinal));
         Assert.ThrowsExactly<ArgumentOutOfRangeException>(() =>
             DockTargetIdentity.Create((DockIdentityScheme)99, "editor.exe"));
+    }
+
+    [TestMethod]
+    public void IdentityComparisonIsSchemeAwareAndUsesProviderCanonicalKeysForAliases()
+    {
+        var appLower = DockTargetIdentity.Create(DockIdentityScheme.WindowsAppUserModelId, "Contoso.Editor", "Contoso.Editor");
+        var appUpper = DockTargetIdentity.Create(DockIdentityScheme.WindowsAppUserModelId, "CONTOSO.EDITOR", "CONTOSO.EDITOR");
+        Assert.AreEqual(appLower, appUpper);
+        Assert.AreEqual(appLower.GetHashCode(), appUpper.GetHashCode());
+
+        var pathOne = DockTargetIdentity.Create(DockIdentityScheme.WindowsCanonicalPath,
+            "D:\\Apps\\Editor.exe", "volume-1:file-42");
+        var pathAlias = DockTargetIdentity.Create(DockIdentityScheme.WindowsCanonicalPath,
+            "D:\\Links\\Editor.exe", "volume-1:file-42");
+        var pathDifferentKey = DockTargetIdentity.Create(DockIdentityScheme.WindowsCanonicalPath,
+            "d:\\apps\\editor.exe", "D:\\Apps\\Editor.exe");
+        Assert.AreEqual(pathOne, pathAlias, "A provider may collapse aliases through one canonical comparison key.");
+        Assert.AreNotEqual(pathOne, pathDifferentKey, "Core must not lowercase arbitrary path identities.");
+
+        var state = DockState.CreateDefault().AddFileOrFolderReference(new DockProjectItem(
+            DockItemId.New(), DockProjectItemKind.File, DockSection.FilesAndFolders, "Editor", pathOne)).State;
+        Assert.AreEqual(DockStateChange.AlreadyPresent, state.AddFileOrFolderReference(new DockProjectItem(
+            DockItemId.New(), DockProjectItemKind.File, DockSection.FilesAndFolders, "Editor alias", pathAlias)).Change);
+    }
+
+    [TestMethod]
+    public void PackageFamilyNameCannotStandAloneAsAnApplicationIdentity()
+    {
+        var familyName = DockTargetIdentity.Create(DockIdentityScheme.WindowsPackageFamilyName, "Contoso_abc123");
+        Assert.ThrowsExactly<ArgumentException>(() => Application(Guid.NewGuid(), familyName, "Package family"));
     }
 
     [TestMethod]
@@ -59,13 +91,27 @@ public sealed class DockProjectStateTests
         var recentItem = recent.State.RecentApplications.Single();
 
         var pinned = recent.State.AddPinnedApplication(recentItem);
-        var duplicate = pinned.State.AddPinnedApplication(Application(Guid.NewGuid(), target, "Editor duplicate"));
+        var duplicate = pinned.State.AddPinnedApplication(Application(Guid.NewGuid(), AppIdentity("CONTOSO.EDITOR"), "Editor duplicate"));
 
         Assert.AreEqual(DockStateChange.Added, pinned.Change);
         Assert.AreEqual(recentItem.Id, pinned.State.PinnedApplications[^1].Id);
         Assert.AreEqual(0, pinned.State.RecentApplications.Count);
         Assert.AreEqual(DockStateChange.AlreadyPresent, duplicate.Change);
         Assert.AreSame(pinned.State, duplicate.State);
+    }
+
+    [TestMethod]
+    public void PromotionKeepsRecentStableIdEvenWhenCallerProvidesANewId()
+    {
+        var state = DockState.CreateDefault().RecordRecentActivity(new DockRecentActivity(
+            AppIdentity("Contoso.Editor"), "Editor", Epoch)).State;
+        var recentId = state.RecentApplications.Single().Id;
+        var promoted = state.AddPinnedApplication(Application(Guid.NewGuid(), AppIdentity("contoso.editor"), "Editor"));
+
+        Assert.AreEqual(DockStateChange.Added, promoted.Change);
+        Assert.AreEqual(recentId, promoted.State.PinnedApplications[^1].Id);
+        Assert.AreEqual(0, promoted.State.RecentApplications.Count);
+        Assert.AreEqual(1, state.RecentApplications.Count, "A transition must not mutate the prior snapshot.");
     }
 
     [TestMethod]
@@ -89,6 +135,25 @@ public sealed class DockProjectStateTests
         CollectionAssert.AreEqual(new[] { "App 1", "App 3", "App 2" },
             state.RecentApplications.Select(item => item.DisplayName).ToArray());
         Assert.AreEqual(3, state.RecentApplications.Select(item => item.TargetIdentity).Distinct().Count());
+    }
+
+    [TestMethod]
+    public void EqualRecentTimestampsPreserveOrderAndStaleObservationsAreIgnored()
+    {
+        var tiedAt = Epoch.AddMinutes(1);
+        var state = DockState.CreateDefault()
+            .RecordRecentActivity(new DockRecentActivity(AppIdentity("Contoso.One"), "One", tiedAt)).State
+            .RecordRecentActivity(new DockRecentActivity(AppIdentity("Contoso.Two"), "Two", tiedAt)).State;
+
+        CollectionAssert.AreEqual(new[] { "One", "Two" }, state.RecentApplications.Select(item => item.DisplayName).ToArray());
+        var repeated = state.RecordRecentActivity(new DockRecentActivity(AppIdentity("Contoso.One"), "One renamed", tiedAt));
+        CollectionAssert.AreEqual(new[] { "One renamed", "Two" }, repeated.State.RecentApplications.Select(item => item.DisplayName).ToArray());
+
+        var stale = repeated.State.RecordRecentActivity(new DockRecentActivity(
+            AppIdentity("Contoso.One"), "Stale name", tiedAt.AddTicks(-1)));
+        Assert.AreEqual(DockStateChange.RecentActivityWasStale, stale.Change);
+        Assert.AreSame(repeated.State, stale.State);
+        Assert.AreEqual("One renamed", stale.State.RecentApplications[0].DisplayName);
     }
 
     [TestMethod]
@@ -135,6 +200,8 @@ public sealed class DockProjectStateTests
         Assert.AreEqual(2, first.FilesAndFolders.Count, "State transitions must not mutate prior snapshots.");
         Assert.AreEqual(DockStateChange.InvalidPosition,
             first.Reorder(DockSection.FilesAndFolders, fileA.Id, 2).Change);
+        Assert.AreEqual(DockStateChange.InvalidPosition,
+            first.Reorder(DockSection.FilesAndFolders, fileA.Id, -1).Change);
     }
 
     [TestMethod]

@@ -138,14 +138,14 @@ V0.1 完成一次 46 行完整性、来源实质性、依赖方向和验收可�
 | 模块/文件 | 当前真实能力 | 尚缺能力 |
 |---|---|---|
 | `src/GlassDock.Core/DockModels.cs` | 保留 M0 UI 演示用 `DockItem(Id, Label, Glyph, AccentHex)` 和 8/24 占位项 | 不作为持久化产品对象；实际状态由新增 `DockProjectState.cs` 表示，图标解析仍待 Shell/UI adapter |
-| `src/GlassDock.Core/DockProjectState.cs` | M2 新增：稳定 GUID 项目 ID、限定的 Windows 身份 scheme、三分区不可变状态、固定/近期去重、最多三项真实观察近期记录、排序与偏好转换；默认 Explorer/底部/FollowSystem/近期启用但列表为空 | 不解析真实 Windows 身份，不访问系统近期记录；Activity 只能由后续真实 observer 提供；没有文件操作或 UI |
+| `src/GlassDock.Core/DockProjectState.cs` | M2 新增：稳定 GUID 项目 ID、提供方规范身份比较键、三分区不可变状态、固定/近期去重、最多三项真实观察近期记录、排序与偏好转换；默认 Explorer/底部/FollowSystem/近期启用但列表为空 | 不解析真实 Windows 身份，不访问系统近期记录；Activity 只能由后续真实 observer 提供；没有文件操作或 UI |
 | `src/GlassDock.Core/DockCommands.cs` | M2 新增：Launch/Activate/Open 命令意图和完成/拒绝/失败结果类型 | 没有 Shell/进程启动、HWND 激活或焦点改变实现 |
-| `src/GlassDock.Core/DockConfigurationJson.cs` | M2 新增：JSON schema v2、从项目内定义的 v1 兼容格式迁移、缺失配置默认、无效/未知版本恢复与诊断 | v1 是兼容格式测试输入，不表示已有正式发布版本；只做内存序列化/反序列化，不选择用户配置路径、不写文件；持久化 I/O adapter 后续实现 |
+| `src/GlassDock.Core/DockConfigurationJson.cs` | M2 新增：JSON schema v3、从项目内兼容格式 v1/v2 迁移、缺失配置默认、无效/未知/超大数据恢复与诊断 | v1/v2 是兼容格式测试输入，不表示曾正式发布；只做内存序列化/反序列化，不选择用户配置路径、不写文件；原子保存与有界磁盘备份由下一独立存储 PR 实现 |
 | `src/GlassDock.Core/DockLayout.cs` | 给定工作区、Dock 外框尺寸和边缘，计算 Bottom/Left/Right 外框位置并验证输入 | 每个项目的布局、DIP/像素换算、多显示器拓扑、碰撞和动画命中模型 |
 | `src/GlassDock.Core/DockTrayCommandRouter.cs` | 纯函数式 Show/Exit 命令路由 | 完整菜单模型、命令状态/错误反馈及窗口系统行为 |
 | `src/GlassDock.Core/DockPerformanceRecorder.cs` | 逻辑更新时间、框架渲染回调间隔和动画时长的分布采样 | GPU 提交、DWM 呈现、物理 scanout、进程资源、应用身份和长时采样宿主 |
 | `src/GlassDock.App/IDockWindowHost.cs`、`IRenderBackend.cs` | 最小窗口宿主和渲染器接口 | 生产宿主、接口能力边界和最终渲染后端；受 M0 NO-GO 限制 |
-| `tests/GlassDock.Core.Tests/` | 既有外框、占位项、托盘路由和性能采样测试；M2 新增状态、身份、最近项、排序、JSON 迁移/恢复及命令契约单测；本地 Release 结果 38/38 通过 | 不包含真实 Shell、桌面焦点、应用启动、文件删除或窗口交互验证 |
+| `tests/GlassDock.Core.Tests/` | 既有外框、占位项、托盘路由和性能采样测试；M2 新增状态、身份、最近项、排序、JSON 迁移/恢复及命令契约单测；PR #1 复审后的本地 Release 结果 45/45 通过，完整解决方案 Release 构建 0 警告/0 错误 | 不包含真实 Shell、桌面焦点、应用启动、文件删除或窗口交互验证 |
 
 M2 第一批已开始。剩余 Core/集成工作包按下列边界继续排期，不把已授权的纯逻辑扩大成 Shell 或桌面操作：
 
@@ -156,3 +156,10 @@ M2 第一批已开始。剩余 Core/集成工作包按下列边界继续排期�
 5. **M4/M5 主题、材质和动画：** 遵守 M0 未冻结渲染路线；保留 FollowSystem/Light/Dark Core 设置契约，不把材质参数写成实测。
 
 优先级 D-09 已获原则接受并仍可调整；所有原始要求和阶段不变。Core 当前可由本次明确授权继续实施，生产 Shell、窗口和渲染集成仍受 M0 约束。
+
+### 目标身份比较约定（PR #1 审查修订）
+
+- `Value` 是交给后续 Shell provider 的目标定位值；`ComparisonKey` 是 identity provider 提供的规范比较键。Core 不访问文件系统，也不推断快捷方式、硬链接、目录联接或其他路径别名。
+- AUMID 与 Package Family Name 按 ordinal、大小写不敏感方式比较；其他身份 scheme 使用 provider 交付的比较键进行 ordinal 比较。Core 不对所有身份统一转小写。路径/`.lnk` 别名只有在 Shell provider 能可靠解析后提供同一比较键时才会去重。
+- Package Family Name 表示包家族，不能单独充当一个具体应用的身份；应用项目使用 AUMID 或 Shell Link 身份。最近应用记录只接受这两种具体应用身份。
+- v1/v2 迁移时以旧 `IdentityValue` 填充比较键；v3 显式保存两者。JSON 编解码仍不负责任何磁盘备份、恢复或路径选择。
