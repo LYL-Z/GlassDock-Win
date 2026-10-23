@@ -12,6 +12,7 @@
 - **M0-10 / M0-33：** WPF 非激活启动观察因进程 HWND 发现方式未取得有效结果而 BLOCKED；WinUI 非激活启动和 DXGI companion 未测试。桌面恢复总标记 false 是环境变量清理缺陷，实际登记进程、前台、指针、任务栏、显示边界和 watchdog 状态检查通过。
 - **M0-25：** 本轮揭示测试 harness 的进程环境变量恢复缺陷。缺失变量通过 `Remove-Item Env:<name>` 还原，并新增静态回归验证区分缺失值、空字符串和普通值；本轮 PowerShell 解析、脚本保护项及 10 个唯一环境变量往返检查均 PASS。急停热键、watchdog 超时和真实桌面恢复仍 NOT TESTED，故 M0-25 整项仍 BLOCKED。
 - **M0-30 / M0-31：** 最终收尾提交 `c8b11d170673fdf7b2ea7f7b3b470344f46e75b2` 已推送；其 [Windows CI run 39946556825](https://github.com/LYL-Z/GlassDock-Win/actions/runs/39946556825) 的 Build/Test 成功。CI 不验证桌面视觉或输入。
+- **本轮提交验证（不改变历史 ID 状态）：** `bb63c182f0cd0ce8cfadb7b1ffb60ce8ad243fd3` 的 [Windows CI run 39958099107](https://github.com/LYL-Z/GlassDock-Win/actions/runs/39958099107) workflow、Build、Test 均成功。该提交包含 M0 脚本/候选日志修正和 M1 规格草案；CI 不验证桌面视觉、焦点或 DXGI 行为。
 - 原 M0 技术决策仍为 **NO-GO，路线不冻结，依赖最终 HWND/renderer 的生产工作不得启动**。根据后续单独记录的阶段依赖变更，只有独立 M1 规格研究线可并行开展；这不是 M0 GO，也不是 M1 整体验收。所有 ID 和后续验收照常保留。
 
 | ID | 原始 M0 要求 | 原始状态及证据（简记） | 新归属 | 原要求保留的风险 / 验收条件 |

@@ -184,7 +184,7 @@ WPF 默认透明路由证据较强，但其独占全屏窗口虽保持 DXGI excl
 
 之后负责人明确批准 M1 规格研究与 M0 技术收尾并行；本报告的历史 NO-GO 不变。新增的 [M0/M1 依赖调整记录](M0-M1-parallel-work-change-2026-10-23.md) 和 [M1 规格草案](../M1/implementation-taskbook.md) 列出可并行范围。当前默认项目目录、46 项矩阵、行为草案、来源、权限登记和设计 token 档案均为草案；7 个 REF 样本均缺 Mac 实机证据。
 
-进程环境变量恢复缺陷已完成静态修正。PowerShell 静态回归与安全范围 `PlanOnly` 均通过，详见 [脚本静态复核](script-static-review-2026-10-23.md)，日志位于 `D:\MacOS\GlassDock-Win\.local\evidence\m0-final-close-20261023\`，包括 `interactive-safety-static.log`、`minimal-desktop-test-plan.txt`、`release-build-final.log`、`release-tests-final.log` 和 `m1-spec-integrity-validation.log`。当前候选 Release 构建 11 个项目、0 警告/错误；Core 单测 18/18 通过。测试申请中的 WGC、非激活及 DXGI 观察没有运行。当前提交及精确 SHA 的远程 CI 将在本次提交后单独补记。
+进程环境变量恢复缺陷已完成静态修正。PowerShell 静态回归与安全范围 `PlanOnly` 均通过，详见 [脚本静态复核](script-static-review-2026-10-23.md)，日志位于 `D:\MacOS\GlassDock-Win\.local\evidence\m0-final-close-20261023\`，包括 `interactive-safety-static.log`、`minimal-desktop-test-plan.txt`、`release-build-final.log`、`release-tests-final.log` 和 `m1-spec-integrity-validation.log`。当前候选 Release 构建 11 个项目、0 警告/错误；Core 单测 18/18 通过。代码和规格提交 `bb63c182f0cd0ce8cfadb7b1ffb60ce8ad243fd3` 的 [精确 Windows CI run 39958099107](https://github.com/LYL-Z/GlassDock-Win/actions/runs/39958099107) 已完成，workflow、Build、Test 均成功；GitHub runner 给出 actions/checkout@v4 与 setup-dotnet@v4 的 Node.js 20 弃用提示，不是项目构建警告。测试申请中的 WGC、非激活及 DXGI 观察没有运行。
 
 # 历史报告说明
 
