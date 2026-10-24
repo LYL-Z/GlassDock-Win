@@ -82,6 +82,7 @@ public sealed class DockIconTests
         Assert.AreEqual(DockIconRole.SystemSettings, settings.Role);
         Assert.AreEqual(DockIconResolutionSource.UserRoleOverride, settings.Source);
         Assert.AreEqual(DockIconRole.Trash, fullTrash.Role);
+        Assert.AreEqual(DockIconVisualState.Full, fullTrash.VisualState);
         Assert.AreEqual(DockApplicationIconStatus.NotFound, fullTrash.Status,
             "An empty-trash image must not be shown for a non-empty Recycle Bin.");
     }

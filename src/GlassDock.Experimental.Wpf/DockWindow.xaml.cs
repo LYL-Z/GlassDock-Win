@@ -103,7 +103,19 @@ public partial class DockWindow : Window
         if (!IsLoaded)
             return;
         RenderState();
-        _diagnostics?.Record("window-loaded", _startupTimer.Elapsed);
+        var dpi = VisualTreeHelper.GetDpi(this);
+        _diagnostics?.Record("window-loaded", _startupTimer.Elapsed, new
+        {
+            LeftDip = Left,
+            TopDip = Top,
+            WidthDip = ActualWidth,
+            HeightDip = ActualHeight,
+            DpiScaleX = dpi.DpiScaleX,
+            DpiScaleY = dpi.DpiScaleY,
+            IconSizeDip = IconSize,
+            IconPixelsAtWindowDpiX = IconSize * dpi.DpiScaleX,
+            IconPixelsAtWindowDpiY = IconSize * dpi.DpiScaleY
+        });
         if (!string.IsNullOrWhiteSpace(_loadDiagnostic)
             && !string.Equals(_loadDiagnostic, "DefaultedMissing", StringComparison.Ordinal))
             StatusText($"Configuration load: {_loadDiagnostic}");
@@ -320,7 +332,9 @@ public partial class DockWindow : Window
             BorderThickness = new Thickness(1),
             Content = iconGrid,
             Focusable = true,
-            ToolTip = item.DisplayName,
+            ToolTip = _session.ExecutionMode == DockExecutionMode.PreviewOnly
+                ? $"{item.DisplayName} — Preview only; Windows app and file commands are blocked"
+                : item.DisplayName,
             Cursor = Cursors.Hand,
             AllowDrop = section != DockSection.RecentApplications,
             Tag = new DockTileDragData(item.Id, section)
@@ -376,12 +390,22 @@ public partial class DockWindow : Window
             {
                 if (token.IsCancellationRequested || !IsLoaded)
                     return;
+                DockIconResolutionResult? result = null;
+                var finalSource = (DockIconResolutionSource?)null;
+                var finalStatus = DockApplicationIconStatus.Failed;
+                var finalVisualState = (DockIconVisualState?)null;
+                string? diagnosticCode = null;
+                string? decodeFailure = null;
+                ImageSource? image = null;
                 try
                 {
-                    var result = await _iconResolver.ResolveAsync(item, GetIconTheme(), token);
+                    result = await _iconResolver.ResolveAsync(item, GetIconTheme(), token);
                     if (token.IsCancellationRequested || !IsLoaded)
                         return;
-                    ImageSource? image = null;
+                    finalSource = result.Source;
+                    finalStatus = result.Status;
+                    finalVisualState = result.VisualState;
+                    diagnosticCode = result.DiagnosticCode;
                     if (result.Status == DockApplicationIconStatus.Found && result.Asset is not null)
                     {
                         try
@@ -391,6 +415,10 @@ public partial class DockWindow : Window
                         catch (Exception) when (result.Source != DockIconResolutionSource.WindowsShell)
                         {
                             var fallback = await _iconResolver.ResolveWindowsShellFallbackAsync(item, token);
+                            finalSource = fallback.Source;
+                            finalStatus = fallback.Status;
+                            finalVisualState ??= fallback.VisualState;
+                            diagnosticCode = fallback.DiagnosticCode;
                             if (fallback.Status == DockApplicationIconStatus.Found && fallback.Asset is not null)
                                 image = DecodeIconAsset(fallback.Asset);
                         }
@@ -404,7 +432,21 @@ public partial class DockWindow : Window
                 catch (Exception)
                 {
                     _iconCache[item.Id] = null;
+                    finalStatus = DockApplicationIconStatus.Failed;
+                    decodeFailure = "icon-load-exception";
                 }
+                _diagnostics?.Record("dock-icon-resolved", timer.Elapsed, new
+                {
+                    ItemId = item.Id.ToString(),
+                    item.DisplayName,
+                    Role = result?.Role?.ToString(),
+                    VisualState = finalVisualState?.ToString(),
+                    Source = finalSource?.ToString(),
+                    Status = finalStatus.ToString(),
+                    Decoded = image is not null,
+                    DiagnosticCode = diagnosticCode,
+                    DecodeFailure = decodeFailure
+                });
                 processed++;
             }
         }

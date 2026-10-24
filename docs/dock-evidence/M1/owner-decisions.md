@@ -1,10 +1,10 @@
 # 项目负责人决策记录
 
-**状态：D-01～D-09 已由项目负责人于 2026-10-23 确认。** 以下是 GlassDock-Win 的 Windows 产品政策，不代表 Apple 对 macOS Dock 的默认行为。M1 仍为 PROVISIONAL；Mac 实机尺寸、材质与动画参数继续保持 `NOT TESTED`。
+**状态：D-01～D-09 于 2026-10-23 确认；D-10 于 2026-10-23 补充并修正图标显示政策。** 以下是 GlassDock-Win 的 Windows 产品政策，不代表 Apple 对 macOS Dock 的默认行为。M1 仍为 PROVISIONAL；Mac 实机尺寸、材质与动画参数继续保持 `NOT TESTED`。
 
 | ID | 负责人决定（2026-10-23） | 影响范围与落实位置 |
 |---|---|---|
-| D-01 | Windows 首次运行默认包含 Explorer，作为 Finder 的功能映射；使用 Windows 系统图标与受支持入口，不称为 Finder。 | DOCK-021；默认项目目录；Core 默认状态将其建模为 Windows 文件管理 system role，后续 Shell provider 才负责解析和打开。 |
+| D-01 | Windows 首次运行默认包含 Explorer，作为 Finder 的功能映射。Windows Explorer 是底层目标身份；可见名称和图标由独立的外观配置决定。 | DOCK-021；Core 默认状态仍建模为 Windows 文件管理 system role；外观层可按用户选择展示 Finder 语义，Shell provider 仍负责目标解析。 |
 | D-02 | 最近应用默认开启，最多显示三个未固定项目；只保留实现所需的本地状态，不上传使用记录；允许关闭和清除。没有可靠历史来源时保持空列表，不生成假最近项。 | DOCK-009/036；Core 默认开关为 true、默认历史为空；近期活动只接受显式观察事件，真实 Windows 来源留给后续 Shell 集成。 |
 | D-03 | Dock 默认在屏幕底部；不修改 Windows 任务栏设置。遇到空间冲突时采用明确兼容策略，允许用户调整 Dock 位置；可说明任务栏自动隐藏选项，但不代替用户更改。 | DOCK-001/046；Core 默认边缘为 Bottom；窗口/工作区策略仍受 M0 NO-GO 限制，产品不能宣称已完成任务栏共存。 |
 | D-04 | 保留固定应用、近期应用、文件/文件夹等核心语义分区，并支持合理自定义。移除 Dock 项目只移除引用，不删除或卸载目标。 | DOCK-006–008、022–029、036；Core 只转换内存状态，不包含删除文件/卸载程序能力；具体 UI 自定义范围留待对应需求实现。 |
@@ -13,6 +13,7 @@
 | D-07 | macOS 特殊组合键不默认映射到 Windows；后续可在高级设置中逐项配置快捷键。 | DOCK-017/018；默认映射为空；设置与窗口动作在对应后续阶段实现。 |
 | D-08 | Dock 默认跟随 Windows 明暗主题，并允许独立设置。最终材质参数仍需 macOS 实机参考。 | DOCK-003/042；Core 默认值为 `FollowSystem`，Light/Dark 是偏好契约；材质输出与准确参数未实现、未验收。 |
 | D-09 | 原则接受 P0 15、P1 26、P2 5 作为开发排期参考；负责人保留调整权，所有原始需求继续保留。 | 46 项需求矩阵与 M1 基线；优先级不更改原始阶段、不豁免验收、不把未测项改为 PASS。 |
+| D-10 | 可见图标、名称与 Windows 目标身份必须解耦。用户提供的 Finder、System Settings、Downloads、Trash PNG 可用于本机 macOS 外观预览；底层分别映射 Explorer、Windows Settings、Downloads Known Folder、Recycle Bin。四角色先作为隔离实验预览，不因此成为公开发行版默认固定项。素材默认仅本地使用，未确认再分发权利前不得进入源码、公开构建或 Release。 | DOCK-005、012、021、023–029；图标 manifest、Core 目标身份及 Windows Shell 命令路由分离；Downloads 用实际 Known Folder ID，Trash 状态以 Windows 查询为准。当前只提供空 Trash 图像。 |
 
 ## 保留事项
 
@@ -20,4 +21,5 @@
 - D-02 只确定产品默认和隐私原则，不证明 Windows 已有可靠的近期应用数据源。集成来源前，Recent 列表应保持空。
 - D-03 不授权更改任务栏、显示设置或系统偏好；冲突时由 Dock 自身配置和用户选择处理。
 - D-08 是主题策略，不是 Liquid Glass 实现证据；视觉参数仍须 Mac 样本支持。
+- D-10 只允许本机素材的实验性接入，不表示 Apple 资源已获公开再分发许可；也不决定四个系统角色全部出现在正常安装版默认 Dock。Finder/Settings/Downloads/Trash 实际桌面显示仍待授权测试。
 - 许可证仍是独立的公开发行治理事项，尚未决定；本次未修改 `LICENSE`。

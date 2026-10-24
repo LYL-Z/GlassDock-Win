@@ -28,17 +28,70 @@ if ($existing.Count -gt 0) {
     throw 'An experimental Dock process is already running. The test will not attach to or stop an existing process.'
 }
 
+$privateIconRoot = Join-Path $script:LocalRoot 'experimental-dock\icon-assets'
+$privateManifest = Join-Path $privateIconRoot 'manifest.json'
+$privateSourceRecord = Join-Path $privateIconRoot 'source-record.json'
+$privateAssetDirectory = Join-Path $privateIconRoot 'assets'
+$expectedMappings = @(
+    [pscustomobject]@{ Role='Finder'; File='finder.png'; State='Default' },
+    [pscustomobject]@{ Role='SystemSettings'; File='settings.png'; State='Default' },
+    [pscustomobject]@{ Role='Downloads'; File='downloads.png'; State='Default' },
+    [pscustomobject]@{ Role='Trash'; File='trash-empty.png'; State='Empty' }
+)
+if (-not (Test-Path -LiteralPath $privateManifest -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $privateSourceRecord -PathType Leaf)) {
+    throw 'The private local icon manifest or source record is missing. No desktop window was started.'
+}
+$manifestModel = Get-Content -LiteralPath $privateManifest -Raw | ConvertFrom-Json -ErrorAction Stop
+$sourceRecord = @(Get-Content -LiteralPath $privateSourceRecord -Raw | ConvertFrom-Json -ErrorAction Stop)
+if ($manifestModel.schemaVersion -ne 1 -or @($manifestModel.mappings).Count -ne $expectedMappings.Count) {
+    throw 'The private icon manifest schema or role count is invalid. No desktop window was started.'
+}
+foreach ($expected in $expectedMappings) {
+    $matches = @($manifestModel.mappings | Where-Object { $_.selector.role -eq $expected.Role })
+    if ($matches.Count -ne 1 -or @($matches[0].variants).Count -ne 1) {
+        throw "The private icon manifest must have exactly one $($expected.Role) variant. No desktop window was started."
+    }
+    $variant = $matches[0].variants[0]
+    if ($variant.relativePath -cne "assets/$($expected.File)" -or
+        $variant.theme -cne 'Any' -or $variant.state -cne $expected.State -or
+        $variant.redistributionStatus -cne 'LocalUseOnly') {
+        throw "The $($expected.Role) mapping does not match its local-only role, file, theme, and state policy."
+    }
+
+    $iconPath = Join-Path $privateAssetDirectory $expected.File
+    if (-not (Test-Path -LiteralPath $iconPath -PathType Leaf)) {
+        throw "A user-provided local preview icon is missing: $($expected.File). No desktop window was started."
+    }
+    $records = @($sourceRecord | Where-Object { $_.File -ceq $expected.File -and $_.Role -ceq $expected.Role })
+    $actualHash = (Get-FileHash -LiteralPath $iconPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($records.Count -ne 1 -or $records[0].Sha256 -cne $actualHash) {
+        throw "The local $($expected.Role) image does not match its D: source record. No desktop window was started."
+    }
+}
+
 $runId = [Guid]::NewGuid().ToString('N')
 $evidenceRoot = Join-Path $script:LocalRoot "evidence\experimental-preview\$runId"
 $profileRoot = Join-Path $evidenceRoot 'profile'
+$profileIconRoot = Join-Path $profileRoot 'icon-assets'
+$profileAssetDirectory = Join-Path $profileIconRoot 'assets'
 $diagnosticsPath = Join-Path $evidenceRoot 'dock-diagnostics.jsonl'
 $firstCapture = Join-Path $evidenceRoot 'dock-first-view.png'
 $reloadCapture = Join-Path $evidenceRoot 'dock-reloaded-view.png'
-New-Item -ItemType Directory -Path $profileRoot -Force | Out-Null
 $deadline = [DateTimeOffset]::UtcNow.AddSeconds(300)
 $session = $null
 $dockProcess = $null
 $completed = $false
+
+if (Test-Path -LiteralPath $evidenceRoot) {
+    throw 'The unique D: evidence directory already exists; refusing to reuse preview state.'
+}
+New-Item -ItemType Directory -Path $profileAssetDirectory -Force | Out-Null
+Copy-Item -LiteralPath $privateManifest -Destination (Join-Path $profileIconRoot 'manifest.json')
+foreach ($expected in $expectedMappings) {
+    Copy-Item -LiteralPath (Join-Path $privateAssetDirectory $expected.File) -Destination (Join-Path $profileAssetDirectory $expected.File)
+}
+Copy-Item -LiteralPath $privateSourceRecord -Destination (Join-Path $evidenceRoot 'icon-source-record.json')
 
 function Get-PreviewEvents {
     if (-not (Test-Path -LiteralPath $diagnosticsPath -PathType Leaf)) { return @() }
@@ -67,6 +120,13 @@ function Wait-PreviewWindowReady {
                 ProcessToWindowReadyMilliseconds = [Math]::Round(([DateTimeOffset]::UtcNow - $Process.StartTime.ToUniversalTime()).TotalMilliseconds, 3)
                 CatalogLoadMilliseconds = $catalogEvent[0].ElapsedMilliseconds
                 WindowLoadedMilliseconds = $windowEvent[0].ElapsedMilliseconds
+                DpiScaleX = $windowEvent[0].Detail.DpiScaleX
+                DpiScaleY = $windowEvent[0].Detail.DpiScaleY
+                DockWidthDip = $windowEvent[0].Detail.WidthDip
+                DockHeightDip = $windowEvent[0].Detail.HeightDip
+                IconSizeDip = $windowEvent[0].Detail.IconSizeDip
+                IconPixelsAtWindowDpiX = $windowEvent[0].Detail.IconPixelsAtWindowDpiX
+                IconPixelsAtWindowDpiY = $windowEvent[0].Detail.IconPixelsAtWindowDpiY
             }
         }
         Start-Sleep -Milliseconds 150
@@ -100,14 +160,48 @@ function Capture-PreviewWindow {
 }
 
 function Start-PreviewDock {
-    $args = @('--preview-only', '--profile-dir', $profileRoot, '--diagnostics-path', $diagnosticsPath)
+    $args = @('--preview-only', '--preview-native-role-icons', '--profile-dir', $profileRoot, '--diagnostics-path', $diagnosticsPath)
     $timer = [Diagnostics.Stopwatch]::StartNew()
     $process = Start-M0OwnedTestProcess -Session $session -FilePath $appExe -ArgumentList $args `
         -WorkingDirectory (Split-Path -Parent $appExe)
     $process.Refresh()
     $startup = Wait-PreviewWindowReady -Process $process -Phase 'Dock preview'
+    Assert-PreviewContentReady
     $startup | Add-Member -NotePropertyName LauncherStartToReadyMilliseconds -NotePropertyValue ([Math]::Round($timer.Elapsed.TotalMilliseconds, 3))
     return [pscustomobject]@{ Process = $process; Startup = $startup }
+}
+
+function Assert-PreviewContentReady {
+    $events = Get-PreviewEvents
+    $manifestEvent = @($events | Where-Object Event -eq 'icon-manifest-loaded' | Select-Object -Last 1)
+    if ($manifestEvent.Count -lt 1 -or $manifestEvent[0].Detail.Status -ne 'Loaded' -or $manifestEvent[0].Detail.MappingCount -ne 4) {
+        throw 'The four-role private icon manifest did not load. Stop without continuing the preview.'
+    }
+    $seedEvent = @($events | Where-Object Event -eq 'native-role-preview-seeded' | Select-Object -Last 1)
+    if ($seedEvent.Count -lt 1 -or $seedEvent[0].Detail.PinnedCount -lt 2 -or $seedEvent[0].Detail.FileCount -lt 2) {
+        throw 'The isolated profile does not contain Finder, Settings, Downloads, and Trash preview items.'
+    }
+
+    $resolved = @($events | Where-Object Event -eq 'dock-icon-resolved')
+    foreach ($role in @('Finder', 'SystemSettings', 'Downloads', 'Trash')) {
+        $matches = @($resolved | Where-Object { $_.Detail.Role -eq $role } | Select-Object -Last 1)
+        if ($matches.Count -lt 1 -or -not $matches[0].Detail.Decoded) {
+            throw "The $role preview icon did not decode. Stop without continuing the preview."
+        }
+        if ($role -ne 'Trash' -and $matches[0].Detail.Source -ne 'UserRoleOverride') {
+            throw "The user-provided $role icon was not selected. Stop without continuing the preview."
+        }
+        if ($role -eq 'Trash') {
+            $visualState = $matches[0].Detail.VisualState
+            $source = $matches[0].Detail.Source
+            if ($visualState -eq 'Empty' -and $source -ne 'UserRoleOverride') {
+                throw 'The empty Recycle Bin did not select the supplied empty Trash asset.'
+            }
+            if ($visualState -ne 'Empty' -and $source -eq 'UserRoleOverride') {
+                throw 'The empty Trash asset was selected while the Recycle Bin was full or unknown.'
+            }
+        }
+    }
 }
 
 function Wait-PreviewDockExit {
@@ -129,14 +223,13 @@ try {
     # Do not force focus back to the pre-test application: preserve any user focus changes.
     $session.Manifest.ForegroundWindowHandle = 0
     $session.Manifest.ForegroundProcessId = 0
-    $session.PreviousDesktopState.Foreground.Hwnd = 0
-    $session.PreviousDesktopState.Foreground.ProcessId = 0
     Write-M0SafetyManifest -Session $session
 
     $first = Start-PreviewDock
     $dockProcess = $first.Process
     Capture-PreviewWindow -WindowHandle $first.Startup.WindowHandle -OutputPath $firstCapture
-    Write-Output 'Preview only is enforced in DockApplicationSession. Pin two entries, drag one to reorder, remove one reference, then close with Exit or Alt+F4. Do not activate any application command.'
+    Write-Output ("First view timing and DPI: " + ($first.Startup | ConvertTo-Json -Compress -Depth 4))
+    Write-Output 'Preview only is enforced in DockApplicationSession. Finder and System Settings are pinned; Downloads and Trash are in Files. Use + Apps to pin two discovered applications, drag one to reorder, remove one added reference, then close with Exit or Alt+F4. Do not activate any application or file command.'
     Wait-PreviewDockExit -Process $dockProcess -Phase 'first-view'
     $dockProcess = $null
 
@@ -160,6 +253,7 @@ try {
     $reload = Start-PreviewDock
     $dockProcess = $reload.Process
     Capture-PreviewWindow -WindowHandle $reload.Startup.WindowHandle -OutputPath $reloadCapture
+    Write-Output ("Reload view timing and DPI: " + ($reload.Startup | ConvertTo-Json -Compress -Depth 4))
     $reloadEvents = Get-PreviewEvents
     $loadedConfiguration = @($reloadEvents | Where-Object {
         $_.Event -eq 'configuration-loaded' -and $_.Detail.PinnedOrderSha256 -eq $expectedPinnedHash
@@ -179,9 +273,35 @@ finally {
             else { [void](Stop-M0OwnedTestProcess -Session $session -Process $dockProcess) }
         }
         Restore-M0InteractiveTestEnvironment -Session $session
-        $summary = Stop-M0InteractiveTestSession -Session $session -Completed $completed
-        if (-not $summary.RestorePassed) { throw 'Desktop recovery checks failed. Do not rerun; inspect the saved post-state.json first.' }
+        $restoreSummary = Stop-M0InteractiveTestSession -Session $session -Completed $completed
+        if (-not $restoreSummary.RestorePassed) { throw 'Desktop recovery checks failed. Do not rerun; inspect the saved post-state.json first.' }
     }
 }
 
+$finalEvents = Get-PreviewEvents
+$latestRoleEvents = @($finalEvents | Where-Object Event -eq 'dock-icon-resolved' | Group-Object { $_.Detail.Role } | ForEach-Object { $_.Group | Select-Object -Last 1 })
+$iconSummary = @($latestRoleEvents | ForEach-Object {
+    [pscustomobject]@{
+        Role = $_.Detail.Role
+        VisualState = $_.Detail.VisualState
+        Source = $_.Detail.Source
+        Status = $_.Detail.Status
+        Decoded = $_.Detail.Decoded
+    }
+})
+$previewSummary = [ordered]@{
+    RunId = $runId
+    Completed = $completed
+    PreviewOnly = $true
+    NativeRoleItems = @('Finder', 'SystemSettings', 'Downloads', 'Trash')
+    FirstView = $first.Startup
+    ReloadView = $reload.Startup
+    RoleIcons = $iconSummary
+    FirstScreenshot = Split-Path -Leaf $firstCapture
+    ReloadScreenshot = Split-Path -Leaf $reloadCapture
+    ConfigurationOrderHash = $expectedPinnedHash
+    RestorationPassed = $restoreSummary.RestorePassed
+    RestorationEvidencePath = $restoreSummary.RunId
+}
+[IO.File]::WriteAllText((Join-Path $evidenceRoot 'preview-summary.json'), ($previewSummary | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
 Write-Output "Preview test completed. Evidence: $evidenceRoot"

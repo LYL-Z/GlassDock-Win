@@ -490,8 +490,10 @@ function Stop-M0InteractiveTestSession {
             "Expected=[$expected]; actual=[$actual]; expectedWasUnset=$($null -eq $expected); actualIsUnset=$($null -eq $actual)"
     }
 
-    $originalHwnd = [IntPtr][long]$Session.PreviousDesktopState.Foreground.Hwnd
-    $originalProcessId = [uint32]$Session.PreviousDesktopState.Foreground.ProcessId
+    # Use the independently controlled restore target. Keep the original pre-state snapshot
+    # intact even when a caller chooses to preserve any focus changes made by the user.
+    $originalHwnd = [IntPtr][long]$Session.Manifest.ForegroundWindowHandle
+    $originalProcessId = [uint32]$Session.Manifest.ForegroundProcessId
     $focusRestore = $true
     $focusDetails = 'No foreground HWND was captured.'
     if ($originalHwnd -ne [IntPtr]::Zero) {

@@ -506,7 +506,8 @@ public sealed record DockIconResolutionResult(
     DockIconAsset? Asset,
     DockIconResolutionSource? Source,
     DockIconRole? Role,
-    string? DiagnosticCode = null);
+    string? DiagnosticCode = null,
+    DockIconVisualState? VisualState = null);
 
 /// <summary>Resolves visual assets separately from Dock target identity and Shell command routing.</summary>
 public sealed class DockIconResolver
@@ -577,11 +578,12 @@ public sealed class DockIconResolver
             cancellationToken.ThrowIfCancellationRequested();
             var loaded = await _assets.ReadLocalAssetAsync(variant.RelativePath, cancellationToken).ConfigureAwait(false);
             if (loaded.Status == DockIconAssetReadStatus.Found && loaded.Asset is not null)
-                return new DockIconResolutionResult(DockApplicationIconStatus.Found, loaded.Asset, source, role);
+                return new DockIconResolutionResult(DockApplicationIconStatus.Found, loaded.Asset, source, role,
+                    VisualState: role is null ? null : state);
             customFailure ??= loaded.DiagnosticCode ?? "custom-icon-unavailable";
         }
 
-        return await ResolveWindowsShellFallbackAsync(item, role, customFailure, cancellationToken).ConfigureAwait(false);
+        return await ResolveWindowsShellFallbackAsync(item, role, role is null ? null : state, customFailure, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Requests the platform icon directly, for example after a UI decoder rejects a local asset.</summary>
@@ -590,12 +592,18 @@ public sealed class DockIconResolver
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(item);
-        return ResolveWindowsShellFallbackAsync(item, FindRole(item, DockIconSelector.ForItem(item.Id), DockIconSelector.ForTarget(item.TargetIdentity)), null, cancellationToken);
+        return ResolveWindowsShellFallbackAsync(
+            item,
+            FindRole(item, DockIconSelector.ForItem(item.Id), DockIconSelector.ForTarget(item.TargetIdentity)),
+            null,
+            null,
+            cancellationToken);
     }
 
     private async ValueTask<DockIconResolutionResult> ResolveWindowsShellFallbackAsync(
         DockProjectItem item,
         DockIconRole? role,
+        DockIconVisualState? visualState,
         string? customFailure,
         CancellationToken cancellationToken)
     {
@@ -607,15 +615,15 @@ public sealed class DockIconResolver
             {
                 var asset = DockIconAsset.Create(shell.Asset.Png, DockIconFormat.Png);
                 return new DockIconResolutionResult(DockApplicationIconStatus.Found, asset,
-                    DockIconResolutionSource.WindowsShell, role, customFailure);
+                    DockIconResolutionSource.WindowsShell, role, customFailure, visualState);
             }
             catch (ArgumentException)
             {
-                return new DockIconResolutionResult(DockApplicationIconStatus.Failed, null, null, role, "shell-icon-invalid");
+                return new DockIconResolutionResult(DockApplicationIconStatus.Failed, null, null, role, "shell-icon-invalid", visualState);
             }
         }
 
-        return new DockIconResolutionResult(shell.Status, null, null, role, shell.DiagnosticCode ?? customFailure);
+        return new DockIconResolutionResult(shell.Status, null, null, role, shell.DiagnosticCode ?? customFailure, visualState);
     }
 
     private DockIconRole? FindRole(DockProjectItem item, DockIconSelector itemSelector, DockIconSelector targetSelector)
