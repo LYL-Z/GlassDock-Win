@@ -210,7 +210,16 @@ public sealed class WindowsShellProviderContractTests
             Assert.IsTrue(query.WaitUntilStarted(TimeSpan.FromSeconds(1)));
             cancellation.Cancel();
 
-            await Assert.ThrowsExactlyAsync<TaskCanceledException>(async () => await pending);
+            var cancellationPropagated = false;
+            try
+            {
+                await pending;
+            }
+            catch (OperationCanceledException)
+            {
+                cancellationPropagated = true;
+            }
+            Assert.IsTrue(cancellationPropagated, "Cancelling the wait must propagate an OperationCanceledException.");
             Assert.IsTrue(diagnostics.Any(item => item.Event == "recycle-bin-wait-cancelled" && item.NativeCallStillRunning));
             Assert.AreEqual(1, query.CallCount);
         }

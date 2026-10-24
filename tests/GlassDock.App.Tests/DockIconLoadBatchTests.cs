@@ -70,7 +70,16 @@ public sealed class DockIconLoadBatchTests
         Assert.IsTrue(SpinWait.SpinUntil(() => Volatile.Read(ref started) == 2, TimeSpan.FromSeconds(1)));
         cancellation.Cancel();
         release.Set();
-        await Assert.ThrowsExactlyAsync<OperationCanceledException>(async () => await batch);
+        var cancellationPropagated = false;
+        try
+        {
+            await batch;
+        }
+        catch (OperationCanceledException)
+        {
+            cancellationPropagated = true;
+        }
+        Assert.IsTrue(cancellationPropagated, "Cancelling the batch must propagate an OperationCanceledException.");
 
         Assert.AreEqual(2, maximumActive);
         Assert.IsTrue(started <= 2, "Queued icon work must not start after cancellation.");
