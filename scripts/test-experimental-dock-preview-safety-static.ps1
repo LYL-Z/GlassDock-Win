@@ -9,6 +9,16 @@ $parseErrors = $null
 if ($parseErrors.Count -gt 0) {
     throw "Preview test runner PowerShell parse failed: $($parseErrors.Message -join '; ')"
 }
+$visualSmokePath = Join-Path $PSScriptRoot 'run-experimental-dock-visual-smoke.ps1'
+$manualInteractionPath = Join-Path $PSScriptRoot 'run-experimental-dock-manual-interaction-test.ps1'
+foreach ($entrypoint in @($visualSmokePath, $manualInteractionPath)) {
+    $entryTokens = $null
+    $entryErrors = $null
+    [void][System.Management.Automation.Language.Parser]::ParseFile($entrypoint, [ref]$entryTokens, [ref]$entryErrors)
+    if ($entryErrors.Count -gt 0) { throw "Preview entrypoint parse failed ($entrypoint): $($entryErrors.Message -join '; ')" }
+}
+$visualSmokeText = [IO.File]::ReadAllText($visualSmokePath)
+$manualInteractionText = [IO.File]::ReadAllText($manualInteractionPath)
 $preflightPath = Join-Path $PSScriptRoot 'preview-icon-asset-preflight.ps1'
 $preflightText = [IO.File]::ReadAllText($preflightPath)
 $preflightTokens = $null
@@ -22,11 +32,14 @@ $assetTestErrors = $null
 [void][System.Management.Automation.Language.Parser]::ParseFile($assetTestsPath, [ref]$assetTestTokens, [ref]$assetTestErrors)
 if ($assetTestErrors.Count -gt 0) { throw "Preview asset regression test PowerShell parse failed: $($assetTestErrors.Message -join '; ')" }
 
-if ($runnerText -notmatch '\$requiredPhrase\s*=\s*''RUN GLASSDOCK PREVIEW TEST''') {
-    throw 'The exact independent desktop-test authorization phrase is missing.'
+if ($runnerText -notmatch "RUN GLASSDOCK VISUAL SMOKE TEST" -or
+    $runnerText -notmatch "RUN GLASSDOCK MANUAL INTERACTION TEST" -or
+    $runnerText -notmatch '\$timeoutSeconds\s*=\s*if \(\$Mode -eq ''VisualSmoke''\) \{ 90 \} else \{ 300 \}') {
+    throw 'The visual and manual interaction paths must use distinct exact authorization phrases and independent 90/300-second watchdog budgets.'
 }
-if ($runnerText -notmatch '-TimeoutSeconds\s+300' -or $runnerText -notmatch "WaitForExit\(\[Math\]::Min\(15000") {
-    throw 'The 5-minute watchdog or bounded capture wait is missing.'
+if ($runnerText -notmatch "WaitForExit\(\[Math\]::Min\(15000" -or
+    $runnerText -notmatch 'Start-M0InteractiveTestSession[\s\S]*?-TimeoutSeconds \$timeoutSeconds') {
+    throw 'The watchdog budget or bounded WGC capture wait is missing.'
 }
 if ($runnerText -notmatch "'--preview-only'") { throw 'The runner does not explicitly request PreviewOnly mode.' }
 if ($runnerText -notmatch "'--preview-native-role-icons'" -or
@@ -78,6 +91,26 @@ if ($runnerText -notmatch 'Start-M0InteractiveTestSession' -or
     $runnerText -notmatch 'finally\s*\{') {
     throw 'The runner must use the independently watched, run-owned process lifecycle with finally cleanup.'
 }
+$smokeBranchStart = $runnerText.LastIndexOf("if (`$Mode -eq 'VisualSmoke') {", [StringComparison]::Ordinal)
+$manualBranchStart = $runnerText.IndexOf('else {', $smokeBranchStart, [StringComparison]::Ordinal)
+if ($smokeBranchStart -lt 0 -or $manualBranchStart -le $smokeBranchStart) {
+    throw 'The automatic smoke and human interaction paths are not separated into distinct execution branches.'
+}
+$smokeFlowStart = $runnerText.LastIndexOf('$first = Start-PreviewDock', $smokeBranchStart, [StringComparison]::Ordinal)
+$smokeFlow = $runnerText.Substring($smokeFlowStart, $manualBranchStart - $smokeFlowStart)
+$smokeBranch = $runnerText.Substring($smokeBranchStart, $manualBranchStart - $smokeBranchStart)
+if ($smokeFlow -notmatch 'Wait-PreviewRoleIconsReady' -or
+    $smokeFlow -notmatch 'Capture-PreviewWindow' -or
+    $smokeBranch -notmatch 'Close-PreviewDockWindow' -or
+    $smokeFlow -match 'Wait-PreviewDockExit|AddAppsButton|SendInput|SendKeys') {
+    throw 'Visual smoke must capture and close automatically without waiting for manual actions or injecting input.'
+}
+if ($manualInteractionText -notmatch "'ManualInteraction'" -or
+    $manualInteractionText -notmatch 'AuthorizationPhrase' -or
+    $runnerText -notmatch 'NOT_TESTED · one or more requested manual actions were not recorded' -or
+    $runnerText -notmatch 'PASS · pin, reorder, remove-reference, and reload persistence were observed') {
+    throw 'Manual interaction needs its own entrypoint and must report missing actions as NOT_TESTED.'
+}
 $windowWaitStart = $runnerText.IndexOf('function Wait-PreviewWindowReady', [StringComparison]::Ordinal)
 $captureStart = $runnerText.IndexOf('function Capture-PreviewWindow', $windowWaitStart, [StringComparison]::Ordinal)
 $exitStart = $runnerText.IndexOf('function Wait-PreviewDockExit', [StringComparison]::Ordinal)
@@ -89,12 +122,13 @@ if ($windowWaitStart -lt 0 -or $captureStart -le $windowWaitStart -or $exitStart
 $windowWaitBody = $runnerText.Substring($windowWaitStart, $captureStart - $windowWaitStart)
 $exitBody = $runnerText.Substring($exitStart, $tryStart - $exitStart)
 $finallyBody = $runnerText.Substring($finallyStart)
-if ($windowWaitBody -notmatch 'AddSeconds\(45\)' -or
+if ($windowWaitBody -notmatch 'AddSeconds\(\$windowReadyTimeoutSeconds\)' -or
     $windowWaitBody -notmatch '\$Process\.HasExited' -or
     $runnerText -notmatch 'WaitForExit\(\[Math\]::Min\(15000' -or
     $runnerText -notmatch 'captureProcess\.ExitCode\s*-ne\s*0' -or
-    $exitBody -notmatch 'WaitForExit\(\$remaining\)' -or
-    $exitBody -notmatch 'did not close before the 5-minute watchdog deadline' -or
+    $exitBody -notmatch "Result = 'NOT_TESTED'" -or
+    $exitBody -notmatch 'manual-interaction-timeout' -or
+    $runnerText -notmatch 'PostMessage\(\$WindowHandle, 0x0010' -or
     $finallyBody -notmatch 'Restore-M0InteractiveTestEnvironment -Session \$session' -or
     $finallyBody -notmatch 'Stop-M0InteractiveTestSession -Session \$session' -or
     $finallyBody -notmatch 'if \(-not \$restoreSummary\.RestorePassed\)') {
@@ -150,13 +184,38 @@ if ($seedText -notmatch 'windows\.file-manager' -or
 
 $windowXaml = [IO.File]::ReadAllText((Join-Path $repoRoot 'src\GlassDock.Experimental.Wpf\DockWindow.xaml'))
 $windowCode = [IO.File]::ReadAllText((Join-Path $repoRoot 'src\GlassDock.Experimental.Wpf\DockWindow.xaml.cs'))
-if ($windowXaml -notmatch 'x:Name="ExitButton"' -or $windowXaml -notmatch 'Click="ExitButton_Click"') {
-    throw 'The Dock window does not expose a visible Exit button.'
+if ($windowXaml -match 'GLASSDOCK\s*/\s*EXPERIMENTAL|PREVIEW ONLY|StatusLabel|PositionButton|ExitButton|Add Apps' -or
+    $windowCode -notmatch 'Header = "Exit Preview"' -or
+    $windowCode -notmatch 'KeyGesture\(Key\.F4, ModifierKeys\.Alt\)' -or
+    $windowCode -notmatch 'Key\.Q' -or
+    $windowXaml -notmatch 'CornerRadius="38"|CornerRadius="14"') {
+    throw 'The Dock visual surface still exposes the debug toolbar, lacks a compact continuous backplate, or lost its right-click Exit/keyboard exit route.'
 }
 if ($windowCode -notmatch 'KeyGesture\(Key\.F4, ModifierKeys\.Alt\)' -or
     $windowCode -notmatch '_catalogLoadCancellation\?\.Cancel\(\)' -or
     $windowCode -notmatch '_iconLoadCancellation\?\.Cancel\(\)') {
     throw 'Alt+F4 or async window-resource cancellation is missing.'
+}
+if ($windowCode -notmatch 'DockVisualGeometry\.Measure' -or
+    $windowCode -notmatch 'VisualLayoutVerified' -or
+    $windowCode -notmatch 'Backplate\.ActualHeight' -or
+    $windowCode -notmatch 'DockSection\.RecentApplications' -or
+    $windowCode -notmatch 'DockSection\.FilesAndFolders') {
+    throw 'The WPF host must apply framework-neutral measured geometry and retain the three section semantics.'
+}
+$geometryPath = Join-Path $repoRoot 'src\GlassDock.Core\DockVisualGeometry.cs'
+$geometryTestsPath = Join-Path $repoRoot 'tests\GlassDock.Core.Tests\DockVisualGeometryTests.cs'
+$geometryText = [IO.File]::ReadAllText($geometryPath)
+$geometryTestsText = [IO.File]::ReadAllText($geometryTestsPath)
+if ($geometryText -notmatch 'public static class DockVisualGeometry' -or
+    $geometryText -notmatch 'public static DockVisualLayout Measure' -or
+    $geometryTestsText -notmatch '\[DataRow\(44d\)\]' -or
+    $geometryTestsText -notmatch '\[DataRow\(48d\)\]' -or
+    $geometryTestsText -notmatch '\[DataRow\(58d\)\]' -or
+    $geometryTestsText -notmatch '\[DataRow\(72d\)\]' -or
+    $geometryTestsText -notmatch 'HorizontalDockKeepsEveryIconInsideItsTileAndRoundedBackplate' -or
+    $geometryTestsText -notmatch 'ConstrainedAxisScrollsWithoutClippingIconCrossSection') {
+    throw 'Framework-neutral Dock geometry and clipping regression coverage for the requested icon sizes is missing.'
 }
 if ($windowCode -notmatch 'WindowInteropHelper\(this\)\.Handle' -or
     $windowCode -notmatch 'SourceInitialized\s*\+=\s*Window_SourceInitialized' -or
@@ -262,11 +321,12 @@ if (-not (Test-Path -LiteralPath $seedTestsPath -PathType Leaf)) {
 }
 
 Write-Output 'PASS: PreviewOnly desktop test script parses and requires a fresh exact authorization phrase.'
-Write-Output 'PASS: Runner is bounded to 300 seconds, uses an independent watchdog, and only tracks run-owned processes.'
+Write-Output 'PASS: Visual smoke has a 90-second watchdog budget; manual interaction has a separate 300-second budget and distinct authorization phrase.'
 Write-Output 'PASS: Runner requests PreviewOnly, uses window-only WGC, and has no input-injection or display-setting code.'
 Write-Output 'PASS: Actual runner and regression tests share one full role/state/source, hash, PNG-structure, and transparency preflight; dry run returns before desktop setup.'
 Write-Output 'PASS: Private user icons and manifest are staged only into a unique D: evidence profile; native roles require explicit PreviewOnly opt-in.'
 Write-Output 'PASS: Watchdog source registers Ctrl+Shift+F12, fails closed on registration failure, enforces timeout, and terminates manifest-owned processes only.'
-Write-Output 'PASS: Session blocks Shell commands before the provider; WPF has visible Exit, Alt+F4, cleanup, and drag-click suppression.'
+Write-Output 'PASS: Session blocks Shell commands before the provider; WPF keeps right-click Exit, Alt+F4/Ctrl+Q, cleanup, and drag-click suppression outside the visual strip.'
+Write-Output 'PASS: The Dock body is an icon-only capsule with section separators; framework-neutral geometry covers 44/48/58/72 DIP and smoke assertions reject clipped icon bounds.'
 Write-Output 'PASS: PreviewOnly command and repeated catalog refresh regression tests are present.'
 Write-Output 'NOT TESTED: actual Dock display, WGC capture, hotkey registration, timeout termination, and desktop restoration.'
