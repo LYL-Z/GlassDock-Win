@@ -10,6 +10,10 @@ Current evidence: WPF default click routing passed 18/18 tested cases; WinUI def
 
 The independently authorized M1 research line is active as a draft only: [46-item specification matrix](docs/dock-evidence/M1/spec-matrix.csv), [reference baseline and missing-sample manifest](docs/dock-evidence/M1/reference-baseline.md), [default item catalog](docs/dock-evidence/M1/default-item-catalog.md), [behavior proposal](docs/dock-evidence/M1/behavior-specification-draft.md), and [asset rights ledger](docs/dock-evidence/M1/rights-and-reference-ledger.md). Production renderer/HWND work remains gated by M0, and no Mac hardware sample has been recorded.
 
+## Experimental Dock preview
+
+The repository includes a runnable **Experimental / PreviewOnly WPF Dock** with local semantic icon mappings, Pinned/Recent/Files sections, basic pin/remove/reorder and persisted preview state. The normal [experimental runner](scripts/run-experimental-dock.ps1) starts in PreviewOnly; Launch, Activate, and Open are blocked at the session-to-Shell boundary. This replaceable host does not select the production window or rendering architecture. User-provided Apple icons stay in the ignored D: `.local` directory and are absent from Git and build resources. Cross-window background blur, Liquid Glass, full manual interaction acceptance, and 1:1 macOS visual acceptance remain incomplete. See the [experimental slice scope](docs/experimental-dock-slice.md) and [local icon mapping guide](docs/native-icon-assets.md).
+
 ## Build
 
 The project pins .NET SDK `10.0.402` in `global.json`. On Windows x64, install it under `.tools\dotnet` without administrator privileges:
