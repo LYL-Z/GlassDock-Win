@@ -78,6 +78,29 @@ if ($runnerText -notmatch 'Start-M0InteractiveTestSession' -or
     $runnerText -notmatch 'finally\s*\{') {
     throw 'The runner must use the independently watched, run-owned process lifecycle with finally cleanup.'
 }
+$windowWaitStart = $runnerText.IndexOf('function Wait-PreviewWindowReady', [StringComparison]::Ordinal)
+$captureStart = $runnerText.IndexOf('function Capture-PreviewWindow', $windowWaitStart, [StringComparison]::Ordinal)
+$exitStart = $runnerText.IndexOf('function Wait-PreviewDockExit', [StringComparison]::Ordinal)
+$tryStart = $runnerText.IndexOf('try {', $exitStart, [StringComparison]::Ordinal)
+$finallyStart = $runnerText.LastIndexOf('finally {', [StringComparison]::Ordinal)
+if ($windowWaitStart -lt 0 -or $captureStart -le $windowWaitStart -or $exitStart -le $captureStart -or $tryStart -le $exitStart -or $finallyStart -le $tryStart) {
+    throw 'Could not identify the preview startup, capture, exit, and restoration lifecycle blocks.'
+}
+$windowWaitBody = $runnerText.Substring($windowWaitStart, $captureStart - $windowWaitStart)
+$exitBody = $runnerText.Substring($exitStart, $tryStart - $exitStart)
+$finallyBody = $runnerText.Substring($finallyStart)
+if ($windowWaitBody -notmatch 'AddSeconds\(45\)' -or
+    $windowWaitBody -notmatch '\$Process\.HasExited' -or
+    $runnerText -notmatch 'WaitForExit\(\[Math\]::Min\(15000' -or
+    $runnerText -notmatch 'captureProcess\.ExitCode\s*-ne\s*0' -or
+    $exitBody -notmatch 'WaitForExit\(\$remaining\)' -or
+    $exitBody -notmatch 'did not close before the 5-minute watchdog deadline' -or
+    $finallyBody -notmatch 'Restore-M0InteractiveTestEnvironment -Session \$session' -or
+    $finallyBody -notmatch 'Stop-M0InteractiveTestSession -Session \$session' -or
+    $finallyBody -notmatch 'if \(-not \$restoreSummary\.RestorePassed\)') {
+    throw 'Preview timeout, early process exit, capture failure, normal close, and restoration failure gates are incomplete.'
+}
+Write-Output 'PASS: Preview startup timeout, early exit, capture failure, orderly close, and fail-closed restoration paths are statically guarded.'
 
 $watchdogPath = Join-Path $repoRoot 'spikes\GlassDock.M0.InputProbe\M0SafetyWatchdog.cs'
 $watchdogText = [IO.File]::ReadAllText($watchdogPath)
@@ -135,13 +158,85 @@ if ($windowCode -notmatch 'KeyGesture\(Key\.F4, ModifierKeys\.Alt\)' -or
     $windowCode -notmatch '_iconLoadCancellation\?\.Cancel\(\)') {
     throw 'Alt+F4 or async window-resource cancellation is missing.'
 }
+if ($windowCode -notmatch 'WindowInteropHelper\(this\)\.Handle' -or
+    $windowCode -notmatch 'SourceInitialized\s*\+=\s*Window_SourceInitialized' -or
+    $windowCode -notmatch 'window-hwnd-created' -or
+    $windowCode -notmatch 'window-visible' -or
+    $windowCode -notmatch 'window-layout-prepared' -or
+    $windowCode -notmatch 'window-content-rendered' -or
+    $windowCode -notmatch 'StartStateIconLoading\(\)' -or
+    $windowCode -match 'await\s+LoadStateIconsAsync\(') {
+    throw 'WPF must report HWND, visibility, layout, and first render independently, then load icons without gating first visibility.'
+}
+$enumeratorPath = Join-Path $repoRoot 'src\GlassDock.Windows\Windowing\DockTopLevelWindowEnumerator.cs'
+$enumeratorText = [IO.File]::ReadAllText($enumeratorPath)
+if ($runnerText -match '\$Process\.MainWindowHandle' -or
+    $runnerText -notmatch 'DockTopLevelWindowEnumerator\]::Enumerate' -or
+    $enumeratorText -notmatch 'EnumWindows' -or
+    $enumeratorText -notmatch 'GetWindowThreadProcessId' -or
+    $enumeratorText -notmatch 'IsWindowVisible' -or
+    $enumeratorText -notmatch 'GetWindowRect' -or
+    $runnerText -notmatch 'window-hwnd-created' -or
+    $runnerText -notmatch 'window-layout-prepared' -or
+    $runnerText -notmatch 'window-content-rendered' -or
+    $runnerText -notmatch 'DockWindowReadinessPolicy\]::Evaluate' -or
+    $runnerText -notmatch 'VisibleCandidateCount\s*=\s*\$readiness\.VisibleCandidateCount' -or
+    $runnerText -notmatch 'refusing an ambiguous WGC target') {
+    throw 'The preview runner must validate the SourceInitialized HWND by Win32 PID, visibility, bounds, uniqueness, layout, and first render.'
+}
+$appText = [IO.File]::ReadAllText($appPath)
+$diagnosticsPath = Join-Path $repoRoot 'src\GlassDock.Experimental.Wpf\ExperimentalDockDiagnostics.cs'
+$diagnosticsText = [IO.File]::ReadAllText($diagnosticsPath)
+if ($runnerText -notmatch 'Get-PreviewEvents\s+-ProcessId\s+\$Process\.Id' -or
+    $runnerText -notmatch 'Assert-PreviewContentReady\s+-Process\s+\$process' -or
+    $diagnosticsText -notmatch 'ProcessId\s*=\s*Environment\.ProcessId' -or
+    $appText -notmatch 'ProcessId\s*=\s*Environment\.ProcessId' -or
+    $windowCode -notmatch 'ProcessId\s*=\s*Environment\.ProcessId') {
+    throw 'Readiness, manifest, seed, and catalog events must be scoped to the process launched for this view so prior-run log records cannot be reused.'
+}
 if ($windowCode -notmatch 'DragStarted:\s*true' -or $windowCode -notmatch 'DragDrop\.DoDragDrop') {
     throw 'A started drag is not explicitly suppressed from invoking the tile command.'
 }
 if ($windowCode -notmatch 'dock-icon-resolved' -or
     $windowCode -notmatch 'VisualState = finalVisualState\?\.ToString\(\)' -or
-    $windowCode -notmatch 'Decoded = image is not null') {
-    throw 'Per-role icon source, visual-state, and decode outcomes must be observable in D: diagnostics.'
+    $windowCode -notmatch 'Decoded = image is not null' -or
+    $windowCode -notmatch 'DockIconLoadBatch\.RunAsync' -or
+    $windowCode -notmatch 'Icon unavailable; showing a safe fallback' -or
+    $runnerText -notmatch 'Wait-PreviewRoleIconsReady' -or
+    $windowCode -notmatch 'state-icon-load-started') {
+    throw 'Icons must load progressively with safe placeholders/fallbacks and have separately observable resolution timing.'
+}
+
+$readinessPolicyPath = Join-Path $repoRoot 'src\GlassDock.Windows\Windowing\DockWindowReadiness.cs'
+$readinessPolicyText = [IO.File]::ReadAllText($readinessPolicyPath)
+$readinessTestsPath = Join-Path $repoRoot 'tests\GlassDock.Windows.Tests\DockWindowReadinessPolicyTests.cs'
+$readinessTestsText = [IO.File]::ReadAllText($readinessTestsPath)
+if ($readinessPolicyText -notmatch 'reportedHandle\s*==\s*nint\.Zero' -or
+    $readinessPolicyText -notmatch 'reported\.ProcessId' -or
+    $readinessPolicyText -notmatch 'reported\.IsVisible' -or
+    $readinessPolicyText -notmatch 'reported\.Bounds\.IsUsable' -or
+    $readinessPolicyText -notmatch 'MultipleVisibleCandidates' -or
+    $readinessPolicyText -notmatch 'layoutPrepared' -or
+    $readinessPolicyText -notmatch 'contentRendered' -or
+    $readinessTestsText -notmatch 'ZeroHwndIsRejected' -or
+    $readinessTestsText -notmatch 'ReportedHwndOwnedByAnotherProcessIsRejected' -or
+    $readinessTestsText -notmatch 'InvisibleReportedWindowIsRejected' -or
+    $readinessTestsText -notmatch 'InvalidWindowBoundsAreRejected' -or
+    $readinessTestsText -notmatch 'ValidEnumeratedHwndIsAcceptedWhenProcessMainWindowHandleWouldBeZero' -or
+    $readinessTestsText -notmatch 'MultipleVisibleWindowsFromDockProcessAreRejected') {
+    throw 'The pure HWND readiness policy must reject invalid candidates and test the MainWindowHandle-zero WPF case without desktop APIs.'
+}
+$batchTestsPath = Join-Path $repoRoot 'tests\GlassDock.App.Tests\DockIconLoadBatchTests.cs'
+$batchTestsText = [IO.File]::ReadAllText($batchTestsPath)
+$recycleProviderPath = Join-Path $repoRoot 'src\GlassDock.Windows\Shell\WindowsRecycleBinIconStateProvider.cs'
+$recycleProviderText = [IO.File]::ReadAllText($recycleProviderPath)
+if ($batchTestsText -notmatch 'SlowIconDoesNotBlockFastIcon' -or
+    $batchTestsText -notmatch 'ConcurrencyLimit' -or
+    $recycleProviderText -notmatch 'DefaultWaitBudget\s*=\s*TimeSpan\.FromSeconds\(1\)' -or
+    $recycleProviderText -notmatch 'WaitAsync\(_waitBudget, cancellationToken\)' -or
+    $recycleProviderText -notmatch 'recycle-bin-query-timeout' -or
+    $recycleProviderText -notmatch 'NativeCallStillRunning') {
+    throw 'The icon batch must be concurrency-bounded, and recycle-bin status waits must have a real timeout without claiming the native call was cancelled.'
 }
 
 $safetyPath = Join-Path $PSScriptRoot 'interactive-test-safety.ps1'

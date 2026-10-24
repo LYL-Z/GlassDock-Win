@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using GlassDock.Core;
@@ -509,6 +510,13 @@ public sealed record DockIconResolutionResult(
     string? DiagnosticCode = null,
     DockIconVisualState? VisualState = null);
 
+public sealed record DockIconResolutionDiagnostic(
+    string Stage,
+    string Event,
+    double ElapsedMilliseconds,
+    string? Outcome = null,
+    string? DiagnosticCode = null);
+
 /// <summary>Resolves visual assets separately from Dock target identity and Shell command routing.</summary>
 public sealed class DockIconResolver
 {
@@ -516,17 +524,20 @@ public sealed class DockIconResolver
     private readonly IDockIconAssetReader _assets;
     private readonly IDockApplicationProvider _applications;
     private readonly IDockIconVisualStateProvider? _visualStates;
+    private readonly Action<DockIconResolutionDiagnostic>? _diagnostics;
 
     public DockIconResolver(
         DockIconManifest manifest,
         IDockIconAssetReader assets,
         IDockApplicationProvider applications,
-        IDockIconVisualStateProvider? visualStates = null)
+        IDockIconVisualStateProvider? visualStates = null,
+        Action<DockIconResolutionDiagnostic>? diagnostics = null)
     {
         _manifest = manifest ?? throw new ArgumentNullException(nameof(manifest));
         _assets = assets ?? throw new ArgumentNullException(nameof(assets));
         _applications = applications ?? throw new ArgumentNullException(nameof(applications));
         _visualStates = visualStates;
+        _diagnostics = diagnostics;
     }
 
     public async ValueTask<DockIconResolutionResult> ResolveAsync(
@@ -544,19 +555,27 @@ public sealed class DockIconResolver
         var state = DockIconVisualState.Default;
         if (role is not null && _visualStates is not null)
         {
+            var stateTimer = Stopwatch.StartNew();
+            Report(new DockIconResolutionDiagnostic("visual-state-query", "started", 0, role.ToString()));
             try
             {
                 state = await _visualStates.GetVisualStateAsync(role.Value, cancellationToken).ConfigureAwait(false);
                 if (!Enum.IsDefined(state))
                     state = DockIconVisualState.Unknown;
+                Report(new DockIconResolutionDiagnostic(
+                    "visual-state-query", "completed", stateTimer.Elapsed.TotalMilliseconds, state.ToString()));
             }
             catch (OperationCanceledException)
             {
+                Report(new DockIconResolutionDiagnostic(
+                    "visual-state-query", "cancelled", stateTimer.Elapsed.TotalMilliseconds, role.ToString()));
                 throw;
             }
             catch
             {
                 state = DockIconVisualState.Unknown;
+                Report(new DockIconResolutionDiagnostic(
+                    "visual-state-query", "failed", stateTimer.Elapsed.TotalMilliseconds, state.ToString()));
             }
         }
         var candidates = new List<(DockIconSelector Selector, DockIconResolutionSource Source)>
@@ -576,7 +595,26 @@ public sealed class DockIconResolver
                 continue;
 
             cancellationToken.ThrowIfCancellationRequested();
-            var loaded = await _assets.ReadLocalAssetAsync(variant.RelativePath, cancellationToken).ConfigureAwait(false);
+            var assetTimer = Stopwatch.StartNew();
+            Report(new DockIconResolutionDiagnostic("local-asset-read", "started", 0, selector.Kind.ToString()));
+            DockIconAssetReadResult loaded;
+            try
+            {
+                loaded = await _assets.ReadLocalAssetAsync(variant.RelativePath, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                Report(new DockIconResolutionDiagnostic("local-asset-read", "cancelled", assetTimer.Elapsed.TotalMilliseconds));
+                throw;
+            }
+            catch (Exception exception)
+            {
+                Report(new DockIconResolutionDiagnostic(
+                    "local-asset-read", "failed", assetTimer.Elapsed.TotalMilliseconds, DiagnosticCode: exception.GetType().Name));
+                throw;
+            }
+            Report(new DockIconResolutionDiagnostic(
+                "local-asset-read", "completed", assetTimer.Elapsed.TotalMilliseconds, loaded.Status.ToString(), loaded.DiagnosticCode));
             if (loaded.Status == DockIconAssetReadStatus.Found && loaded.Asset is not null)
                 return new DockIconResolutionResult(DockApplicationIconStatus.Found, loaded.Asset, source, role,
                     VisualState: role is null ? null : state);
@@ -608,7 +646,11 @@ public sealed class DockIconResolver
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        var timer = Stopwatch.StartNew();
+        Report(new DockIconResolutionDiagnostic("windows-shell-fallback", "started", 0, role?.ToString()));
         var shell = await _applications.ResolveApplicationIconAsync(item.TargetIdentity, cancellationToken).ConfigureAwait(false);
+        Report(new DockIconResolutionDiagnostic(
+            "windows-shell-fallback", "completed", timer.Elapsed.TotalMilliseconds, shell.Status.ToString(), shell.DiagnosticCode));
         if (shell.Status == DockApplicationIconStatus.Found && shell.Asset is not null)
         {
             try
@@ -624,6 +666,18 @@ public sealed class DockIconResolver
         }
 
         return new DockIconResolutionResult(shell.Status, null, null, role, shell.DiagnosticCode ?? customFailure, visualState);
+    }
+
+    private void Report(DockIconResolutionDiagnostic diagnostic)
+    {
+        try
+        {
+            _diagnostics?.Invoke(diagnostic);
+        }
+        catch
+        {
+            // Optional diagnostics must not change the resolved icon or selected state.
+        }
     }
 
     private DockIconRole? FindRole(DockProjectItem item, DockIconSelector itemSelector, DockIconSelector targetSelector)

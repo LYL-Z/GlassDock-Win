@@ -64,6 +64,7 @@ $profileRoot = Join-Path $evidenceRoot 'profile'
 $profileIconRoot = Join-Path $profileRoot 'icon-assets'
 $profileAssetDirectory = Join-Path $profileIconRoot 'assets'
 $diagnosticsPath = Join-Path $evidenceRoot 'dock-diagnostics.jsonl'
+$windowReadinessPath = Join-Path $evidenceRoot 'window-readiness.jsonl'
 $firstCapture = Join-Path $evidenceRoot 'dock-first-view.png'
 $reloadCapture = Join-Path $evidenceRoot 'dock-reloaded-view.png'
 $deadline = [DateTimeOffset]::UtcNow.AddSeconds(300)
@@ -82,40 +83,152 @@ foreach ($expected in $expectedMappings) {
 Copy-Item -LiteralPath $privateSourceRecord -Destination (Join-Path $evidenceRoot 'icon-source-record.json')
 
 function Get-PreviewEvents {
+    param([int]$ProcessId = 0)
+
     if (-not (Test-Path -LiteralPath $diagnosticsPath -PathType Leaf)) { return @() }
-    return @(Get-Content -LiteralPath $diagnosticsPath -ErrorAction SilentlyContinue | ForEach-Object {
+    $events = @(Get-Content -LiteralPath $diagnosticsPath -ErrorAction SilentlyContinue | ForEach-Object {
         try { $_ | ConvertFrom-Json -ErrorAction Stop } catch { $null }
     } | Where-Object { $null -ne $_ })
+    if ($ProcessId -gt 0) {
+        return @($events | Where-Object { $_.ProcessId -eq $ProcessId })
+    }
+    return $events
+}
+
+if (-not ('GlassDock.Windows.Windowing.DockWindowReadinessPolicy' -as [type])) {
+    $windowAssemblyRoot = Split-Path -Parent $appExe
+    foreach ($assemblyName in @('GlassDock.Core.dll', 'GlassDock.App.dll', 'GlassDock.Windows.dll')) {
+        $assemblyPath = Join-Path $windowAssemblyRoot $assemblyName
+        if (-not (Test-Path -LiteralPath $assemblyPath -PathType Leaf)) {
+            throw "The built HWND readiness policy assembly is missing: $assemblyPath"
+        }
+        Add-Type -Path $assemblyPath -ErrorAction Stop
+    }
+}
+
+function Write-PreviewWindowReadinessRecord {
+    param([Parameter(Mandatory)][string]$Event, [Parameter(Mandatory)][object]$Detail)
+
+    $record = [pscustomobject]@{
+        TimestampUtc = [DateTimeOffset]::UtcNow
+        Event = $Event
+        Detail = $Detail
+    } | ConvertTo-Json -Depth 8 -Compress
+    [IO.File]::AppendAllText($windowReadinessPath, $record + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
 }
 
 function Wait-PreviewWindowReady {
     param([Parameter(Mandatory)][Diagnostics.Process]$Process, [Parameter(Mandatory)][string]$Phase)
 
+    $milestoneDeadline = [DateTimeOffset]::UtcNow.AddSeconds(45)
+    $nativeVisibilityWaitStarted = $null
     while ([DateTimeOffset]::UtcNow -lt $deadline) {
         Assert-M0InteractiveTestCanContinue -Session $session
         $Process.Refresh()
         if ($Process.HasExited) { throw "The PreviewOnly Dock exited during $Phase startup (exit $($Process.ExitCode))." }
-        $events = Get-PreviewEvents
+        $events = Get-PreviewEvents -ProcessId $Process.Id
         $catalogEvent = @($events | Where-Object Event -eq 'catalog-load-completed' | Select-Object -Last 1)
-        $windowEvent = @($events | Where-Object Event -eq 'window-loaded' | Select-Object -Last 1)
-        if ($catalogEvent.Count -gt 0 -and $windowEvent.Count -gt 0 -and $Process.MainWindowHandle -ne [IntPtr]::Zero) {
-            if ($catalogEvent[0].Detail.Status -ne 'Succeeded') {
-                throw "The application catalog did not load successfully in $($Phase): $($catalogEvent[0].Detail.Status)."
+        $hwndCreated = @($events | Where-Object Event -eq 'window-hwnd-created' | Select-Object -Last 1)
+        $visibleEvent = @($events | Where-Object Event -eq 'window-visible' | Select-Object -Last 1)
+        $layoutEvent = @($events | Where-Object Event -eq 'window-layout-prepared' | Select-Object -Last 1)
+        $contentEvent = @($events | Where-Object Event -eq 'window-content-rendered' | Select-Object -Last 1)
+        if ($hwndCreated.Count -gt 0 -and $visibleEvent.Count -gt 0 -and $layoutEvent.Count -gt 0 -and $contentEvent.Count -gt 0) {
+            $reportedHwnd = [string]$hwndCreated[0].Detail.Hwnd
+            if ($reportedHwnd -notmatch '^0x[0-9A-Fa-f]+$') {
+                throw "WPF SourceInitialized reported an invalid HWND value during ${Phase}: '$reportedHwnd'."
             }
+            $reportedHandle = [Convert]::ToInt64($reportedHwnd.Substring(2), 16)
+            $windows = @([GlassDock.Windows.Windowing.DockTopLevelWindowEnumerator]::Enumerate())
+            $reportedRows = @($windows | Where-Object Handle -eq $reportedHandle)
+            if ($reportedRows.Count -eq 0) {
+                throw "WPF HWND $reportedHwnd was not found by Win32 EnumWindows during $Phase. No other window will be substituted."
+            }
+            if ($reportedRows.Count -ne 1) {
+                throw "Win32 enumeration returned $($reportedRows.Count) observations for WPF HWND $reportedHwnd during $Phase; expected exactly one."
+            }
+            $reported = $reportedRows[0]
+            if (-not $reported.IsWindow) { throw "Reported HWND $reportedHwnd is no longer a valid Win32 window during $Phase." }
+            if ($reported.ProcessId -ne $Process.Id) {
+                throw "Reported HWND $reportedHwnd belongs to PID $($reported.ProcessId), expected run-owned Dock PID $($Process.Id)."
+            }
+            if (-not $reported.IsVisible -or $reported.Width -le 0 -or $reported.Height -le 0) {
+                if ($null -eq $nativeVisibilityWaitStarted) { $nativeVisibilityWaitStarted = [DateTimeOffset]::UtcNow }
+                if ([DateTimeOffset]::UtcNow - $nativeVisibilityWaitStarted -gt [TimeSpan]::FromSeconds(2)) {
+                    $detail = [pscustomobject]@{
+                        Hwnd = $reportedHwnd; ProcessId = $reported.ProcessId; IsWindow = $reported.IsWindow
+                        IsVisible = $reported.IsVisible; Left = $reported.Left; Top = $reported.Top
+                        Right = $reported.Right; Bottom = $reported.Bottom; Width = $reported.Width; Height = $reported.Height
+                    }
+                    Write-PreviewWindowReadinessRecord -Event 'window-readiness-rejected' -Detail $detail
+                    throw "Run-owned HWND $reportedHwnd did not become visible with positive bounds during ${Phase}: $($detail | ConvertTo-Json -Compress)."
+                }
+                Start-Sleep -Milliseconds 100
+                continue
+            }
+
+            $visibleCandidates = @($windows | Where-Object {
+                $_.ProcessId -eq $Process.Id -and $_.IsWindow -and $_.IsVisible -and $_.Width -gt 0 -and $_.Height -gt 0
+            })
+            if ($visibleCandidates.Count -eq 0) {
+                throw "Win32 enumeration found zero visible, non-zero-size candidate windows for Dock PID $($Process.Id) during $Phase."
+            }
+            if ($visibleCandidates.Count -gt 1) {
+                $summary = @($visibleCandidates | ForEach-Object {
+                    [pscustomobject]@{ Hwnd = ('0x{0:X}' -f $_.Handle); Left = $_.Left; Top = $_.Top; Width = $_.Width; Height = $_.Height }
+                })
+                Write-PreviewWindowReadinessRecord -Event 'window-readiness-ambiguous' -Detail $summary
+                throw "Win32 enumeration found $($visibleCandidates.Count) visible candidate windows for Dock PID $($Process.Id) during $Phase; refusing an ambiguous WGC target: $($summary | ConvertTo-Json -Compress)."
+            }
+            if ($visibleCandidates[0].Handle -ne $reportedHandle) {
+                throw "The unique visible Dock candidate does not match WPF SourceInitialized HWND $reportedHwnd during $Phase."
+            }
+            $readinessObservations = [System.Collections.Generic.List[GlassDock.Windows.Windowing.DockWindowObservation]]::new()
+            foreach ($window in $windows) { $readinessObservations.Add($window) }
+            $readiness = [GlassDock.Windows.Windowing.DockWindowReadinessPolicy]::Evaluate(
+                $readinessObservations, $Process.Id, [IntPtr]$reportedHandle,
+                $layoutEvent.Count -gt 0, $contentEvent.Count -gt 0)
+            if (-not $readiness.IsReady) {
+                throw "The unit-tested HWND readiness policy rejected the candidate during ${Phase}: $($readiness.DiagnosticCode)."
+            }
+            if ($hwndCreated[0].Detail.ProcessId -ne $Process.Id) {
+                throw "WPF SourceInitialized reported PID $($hwndCreated[0].Detail.ProcessId), expected the run-owned Dock PID $($Process.Id)."
+            }
+
+            $detail = [pscustomobject]@{
+                Hwnd = $reportedHwnd
+                ProcessId = $Process.Id
+                IsWindow = $reported.IsWindow
+                IsVisible = $reported.IsVisible
+                Bounds = [pscustomobject]@{ Left = $reported.Left; Top = $reported.Top; Right = $reported.Right; Bottom = $reported.Bottom }
+                ReadinessStatus = $readiness.Status.ToString()
+                VisibleCandidateCount = $readiness.VisibleCandidateCount
+                LayoutPreparedMilliseconds = $layoutEvent[0].ElapsedMilliseconds
+                ContentRenderedMilliseconds = $contentEvent[0].ElapsedMilliseconds
+                WgcWindowCaptureEligible = $true
+                CatalogStatus = if ($catalogEvent.Count -gt 0) { $catalogEvent[0].Detail.Status } else { 'StillLoading' }
+                MainWindowHandleWasUsed = $false
+            }
+            Write-PreviewWindowReadinessRecord -Event 'window-readiness-passed' -Detail $detail
             return [pscustomobject]@{
-                WindowHandle = $Process.MainWindowHandle
+                WindowHandle = [IntPtr]$reportedHandle
+                Hwnd = $reportedHwnd
+                VisibleMilliseconds = $visibleEvent[0].ElapsedMilliseconds
+                LayoutPreparedMilliseconds = $layoutEvent[0].ElapsedMilliseconds
+                ContentRenderedMilliseconds = $contentEvent[0].ElapsedMilliseconds
                 ProcessStartUtc = $Process.StartTime.ToUniversalTime().ToString('O')
-                ProcessToWindowReadyMilliseconds = [Math]::Round(([DateTimeOffset]::UtcNow - $Process.StartTime.ToUniversalTime()).TotalMilliseconds, 3)
-                CatalogLoadMilliseconds = $catalogEvent[0].ElapsedMilliseconds
-                WindowLoadedMilliseconds = $windowEvent[0].ElapsedMilliseconds
-                DpiScaleX = $windowEvent[0].Detail.DpiScaleX
-                DpiScaleY = $windowEvent[0].Detail.DpiScaleY
-                DockWidthDip = $windowEvent[0].Detail.WidthDip
-                DockHeightDip = $windowEvent[0].Detail.HeightDip
-                IconSizeDip = $windowEvent[0].Detail.IconSizeDip
-                IconPixelsAtWindowDpiX = $windowEvent[0].Detail.IconPixelsAtWindowDpiX
-                IconPixelsAtWindowDpiY = $windowEvent[0].Detail.IconPixelsAtWindowDpiY
+                ProcessToWgcEligibleMilliseconds = [Math]::Round(([DateTimeOffset]::UtcNow - $Process.StartTime.ToUniversalTime()).TotalMilliseconds, 3)
+                CatalogLoadMilliseconds = if ($catalogEvent.Count -gt 0) { $catalogEvent[0].ElapsedMilliseconds } else { $null }
+                DpiScaleX = $layoutEvent[0].Detail.DpiScaleX
+                DpiScaleY = $layoutEvent[0].Detail.DpiScaleY
+                DockWidthDip = $layoutEvent[0].Detail.WidthDip
+                DockHeightDip = $layoutEvent[0].Detail.HeightDip
+                IconSizeDip = $layoutEvent[0].Detail.IconSizeDip
+                IconPixelsAtWindowDpiX = $layoutEvent[0].Detail.IconPixelsAtWindowDpiX
+                IconPixelsAtWindowDpiY = $layoutEvent[0].Detail.IconPixelsAtWindowDpiY
             }
+        }
+        if ([DateTimeOffset]::UtcNow -gt $milestoneDeadline) {
+            throw "The PreviewOnly Dock did not emit separate HWND, visibility, layout, and first-render milestones within 45 seconds during $Phase."
         }
         Start-Sleep -Milliseconds 150
     }
@@ -136,6 +249,11 @@ function Capture-PreviewWindow {
         if ($captureProcess.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $OutputPath -PathType Leaf)) {
             throw "Window-only WGC capture failed with exit code $($captureProcess.ExitCode)."
         }
+        Write-PreviewWindowReadinessRecord -Event 'wgc-window-capture-completed' -Detail ([pscustomobject]@{
+            Hwnd = $hwndText
+            PngFileName = Split-Path -Leaf $OutputPath
+            ProcessId = $dockProcess.Id
+        })
         Write-Output "WGC window-only capture saved under D: .local evidence: $OutputPath"
     }
     finally {
@@ -154,13 +272,15 @@ function Start-PreviewDock {
         -WorkingDirectory (Split-Path -Parent $appExe)
     $process.Refresh()
     $startup = Wait-PreviewWindowReady -Process $process -Phase 'Dock preview'
-    Assert-PreviewContentReady
+    Assert-PreviewContentReady -Process $process
     $startup | Add-Member -NotePropertyName LauncherStartToReadyMilliseconds -NotePropertyValue ([Math]::Round($timer.Elapsed.TotalMilliseconds, 3))
     return [pscustomobject]@{ Process = $process; Startup = $startup }
 }
 
 function Assert-PreviewContentReady {
-    $events = Get-PreviewEvents
+    param([Parameter(Mandatory)][Diagnostics.Process]$Process)
+
+    $events = Get-PreviewEvents -ProcessId $Process.Id
     $manifestEvent = @($events | Where-Object Event -eq 'icon-manifest-loaded' | Select-Object -Last 1)
     if ($manifestEvent.Count -lt 1 -or $manifestEvent[0].Detail.Status -ne 'Loaded' -or $manifestEvent[0].Detail.MappingCount -ne 4) {
         throw 'The four-role private icon manifest did not load. Stop without continuing the preview.'
@@ -169,24 +289,55 @@ function Assert-PreviewContentReady {
     if ($seedEvent.Count -lt 1 -or $seedEvent[0].Detail.PinnedCount -lt 2 -or $seedEvent[0].Detail.FileCount -lt 2) {
         throw 'The isolated profile does not contain Finder, Settings, Downloads, and Trash preview items.'
     }
+}
 
+function Wait-PreviewRoleIconsReady {
+    param([Parameter(Mandatory)][Diagnostics.Process]$Process, [Parameter(Mandatory)][string]$Phase)
+
+    $iconDeadline = [DateTimeOffset]::UtcNow.AddSeconds(60)
+    while ([DateTimeOffset]::UtcNow -lt $deadline -and [DateTimeOffset]::UtcNow -lt $iconDeadline) {
+        Assert-M0InteractiveTestCanContinue -Session $session
+        $Process.Refresh()
+        if ($Process.HasExited) { throw "The PreviewOnly Dock exited while icon assets were loading during $Phase." }
+        $events = Get-PreviewEvents -ProcessId $Process.Id
+        $resolved = @($events | Where-Object Event -eq 'dock-icon-resolved')
+        $latestByRole = @($resolved | Group-Object { $_.Detail.Role } | ForEach-Object { $_.Group | Select-Object -Last 1 })
+        $failures = @($latestByRole | Where-Object { -not $_.Detail.Decoded })
+        if ($failures.Count -gt 0) {
+            throw "A required native-role icon failed to decode during ${Phase}: $(($failures | ForEach-Object { $_.Detail.Role + ':' + $_.Detail.DiagnosticCode }) -join ', ')."
+        }
+        $requiredRoles = @('Finder', 'SystemSettings', 'Downloads', 'Trash')
+        $complete = @($requiredRoles | Where-Object {
+            $role = $_
+            @($resolved | Where-Object { $_.Detail.Role -eq $role -and $_.Detail.Decoded }).Count -gt 0
+        })
+        if ($complete.Count -eq 4) { return }
+        Start-Sleep -Milliseconds 150
+    }
+    throw "The four role icons did not decode within the independent 60-second icon-load window during $Phase; the visible Dock is not treated as visually ready."
+}
+
+function Assert-PreviewIconMapping {
+    param([Parameter(Mandatory)][Diagnostics.Process]$Process, [Parameter(Mandatory)][string]$Phase)
+
+    $events = Get-PreviewEvents -ProcessId $Process.Id
     $resolved = @($events | Where-Object Event -eq 'dock-icon-resolved')
     foreach ($role in @('Finder', 'SystemSettings', 'Downloads', 'Trash')) {
         $matches = @($resolved | Where-Object { $_.Detail.Role -eq $role } | Select-Object -Last 1)
         if ($matches.Count -lt 1 -or -not $matches[0].Detail.Decoded) {
-            throw "The $role preview icon did not decode. Stop without continuing the preview."
+            throw "The $role preview icon did not decode during $Phase. Stop without continuing the preview."
         }
         if ($role -ne 'Trash' -and $matches[0].Detail.Source -ne 'UserRoleOverride') {
-            throw "The user-provided $role icon was not selected. Stop without continuing the preview."
+            throw "The user-provided $role icon was not selected during $Phase. Stop without continuing the preview."
         }
         if ($role -eq 'Trash') {
             $visualState = $matches[0].Detail.VisualState
             $source = $matches[0].Detail.Source
             if ($visualState -eq 'Empty' -and $source -ne 'UserRoleOverride') {
-                throw 'The empty Recycle Bin did not select the supplied empty Trash asset.'
+                throw "The empty Recycle Bin did not select the supplied empty Trash asset during $Phase."
             }
             if ($visualState -ne 'Empty' -and $source -eq 'UserRoleOverride') {
-                throw 'The empty Trash asset was selected while the Recycle Bin was full or unknown.'
+                throw "The empty Trash asset was selected while the Recycle Bin was full or unknown during $Phase."
             }
         }
     }
@@ -215,13 +366,15 @@ try {
 
     $first = Start-PreviewDock
     $dockProcess = $first.Process
+    Wait-PreviewRoleIconsReady -Process $dockProcess -Phase 'first view'
+    Assert-PreviewIconMapping -Process $dockProcess -Phase 'first view'
     Capture-PreviewWindow -WindowHandle $first.Startup.WindowHandle -OutputPath $firstCapture
     Write-Output ("First view timing and DPI: " + ($first.Startup | ConvertTo-Json -Compress -Depth 4))
     Write-Output 'Preview only is enforced in DockApplicationSession. Finder and System Settings are pinned; Downloads and Trash are in Files. Use + Apps to pin two discovered applications, drag one to reorder, remove one added reference, then close with Exit or Alt+F4. Do not activate any application or file command.'
     Wait-PreviewDockExit -Process $dockProcess -Phase 'first-view'
     $dockProcess = $null
 
-    $firstRunEvents = Get-PreviewEvents
+    $firstRunEvents = Get-PreviewEvents -ProcessId $first.Process.Id
     $successfulPins = @($firstRunEvents | Where-Object {
         $_.Event -eq 'dock-state-mutation' -and $_.Detail.Operation -eq 'PinApplication' -and $_.Detail.Succeeded -and $_.Detail.Changed
     })
@@ -240,9 +393,11 @@ try {
 
     $reload = Start-PreviewDock
     $dockProcess = $reload.Process
+    Wait-PreviewRoleIconsReady -Process $dockProcess -Phase 'reloaded view'
+    Assert-PreviewIconMapping -Process $dockProcess -Phase 'reloaded view'
     Capture-PreviewWindow -WindowHandle $reload.Startup.WindowHandle -OutputPath $reloadCapture
     Write-Output ("Reload view timing and DPI: " + ($reload.Startup | ConvertTo-Json -Compress -Depth 4))
-    $reloadEvents = Get-PreviewEvents
+    $reloadEvents = Get-PreviewEvents -ProcessId $reload.Process.Id
     $loadedConfiguration = @($reloadEvents | Where-Object {
         $_.Event -eq 'configuration-loaded' -and $_.Detail.PinnedOrderSha256 -eq $expectedPinnedHash
     })
@@ -266,7 +421,8 @@ finally {
     }
 }
 
-$finalEvents = Get-PreviewEvents
+$runProcessIds = @($first.Process.Id, $reload.Process.Id)
+$finalEvents = @(Get-PreviewEvents | Where-Object { $_.ProcessId -in $runProcessIds })
 $latestRoleEvents = @($finalEvents | Where-Object Event -eq 'dock-icon-resolved' | Group-Object { $_.Detail.Role } | ForEach-Object { $_.Group | Select-Object -Last 1 })
 $iconSummary = @($latestRoleEvents | ForEach-Object {
     [pscustomobject]@{

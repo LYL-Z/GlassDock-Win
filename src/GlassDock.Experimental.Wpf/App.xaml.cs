@@ -46,6 +46,7 @@ public partial class App : Application
                 initialState = seed.State;
                 diagnostics?.Record("native-role-preview-seeded", startupTimer.Elapsed, new
                 {
+                    ProcessId = Environment.ProcessId,
                     seed.Changed,
                     PinnedCount = initialState.PinnedApplications.Count,
                     RecentCount = initialState.RecentApplications.Count,
@@ -53,12 +54,17 @@ public partial class App : Application
                 });
             }
 
-            var shellProvider = new WindowsShellProvider();
+            var shellProvider = new WindowsShellProvider(iconDiagnostic =>
+                diagnostics?.Record(
+                    $"shell-icon-{iconDiagnostic.Stage}-{iconDiagnostic.Event}",
+                    TimeSpan.FromMilliseconds(iconDiagnostic.ElapsedMilliseconds),
+                    new { iconDiagnostic.HResult }));
             var iconManifestTimer = Stopwatch.StartNew();
             var iconManifestStore = new DockIconManifestFileStore(options.ProfileDirectory);
             var iconManifest = iconManifestStore.Load();
             diagnostics?.Record("icon-manifest-loaded", iconManifestTimer.Elapsed, new
             {
+                ProcessId = Environment.ProcessId,
                 Status = iconManifest.Status.ToString(),
                 iconManifest.DiagnosticCode,
                 RoleAssignmentCount = iconManifest.Manifest.RoleAssignments.Count,
@@ -73,7 +79,22 @@ public partial class App : Application
                 iconManifest.Manifest,
                 iconManifestStore,
                 shellProvider,
-                new WindowsDockIconVisualStateProvider());
+                new WindowsDockIconVisualStateProvider(diagnostics: queryDiagnostic =>
+                    diagnostics?.Record(
+                        queryDiagnostic.Event,
+                        TimeSpan.FromMilliseconds(queryDiagnostic.WaitElapsedMilliseconds),
+                        new
+                        {
+                            queryDiagnostic.ApiElapsedMilliseconds,
+                            queryDiagnostic.NativeCallStillRunning,
+                            queryDiagnostic.Result,
+                            queryDiagnostic.HResult
+                        })),
+                resolutionDiagnostic =>
+                    diagnostics?.Record(
+                        $"dock-icon-{resolutionDiagnostic.Stage}-{resolutionDiagnostic.Event}",
+                        TimeSpan.FromMilliseconds(resolutionDiagnostic.ElapsedMilliseconds),
+                        new { resolutionDiagnostic.Outcome, resolutionDiagnostic.DiagnosticCode }));
             var window = new DockWindow(session, loaded.DiagnosticCode ?? loaded.Status.ToString(), diagnostics, startupTimer, iconResolver);
             MainWindow = window;
             diagnostics?.Record("window-show-called", startupTimer.Elapsed);

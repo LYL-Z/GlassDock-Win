@@ -1,5 +1,7 @@
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 using GlassDock.App;
 using GlassDock.Core;
 using GlassDock.Windows.Shell;
@@ -161,9 +163,141 @@ public sealed class WindowsShellProviderContractTests
         Assert.AreEqual(DockIconVisualState.Unknown, await negative.GetVisualStateAsync(DockIconRole.Trash));
     }
 
+    [TestMethod]
+    public async Task RecycleBinWaitTimeoutReturnsUnknownAndReusesOneStillRunningNativeQuery()
+    {
+        using var query = new BlockingRecycleBinStatusQuery(new WindowsRecycleBinStatusQueryResult(true, 4));
+        var diagnostics = new List<WindowsRecycleBinQueryDiagnostic>();
+        var provider = new WindowsDockIconVisualStateProvider(
+            query,
+            TimeSpan.FromMilliseconds(40),
+            diagnostics.Add);
+
+        try
+        {
+            var first = await provider.GetVisualStateAsync(DockIconRole.Trash);
+            var second = await provider.GetVisualStateAsync(DockIconRole.Trash);
+
+            Assert.AreEqual(DockIconVisualState.Unknown, first);
+            Assert.AreEqual(DockIconVisualState.Unknown, second);
+            Assert.AreEqual(1, query.CallCount, "A timed-out native call must not fan out into repeated background tasks.");
+            Assert.IsTrue(diagnostics.Any(item => item.Event == "recycle-bin-query-timeout" && item.NativeCallStillRunning));
+        }
+        finally
+        {
+            query.Release();
+        }
+
+        Assert.IsTrue(query.WaitUntilFinished(TimeSpan.FromSeconds(1)));
+        Assert.AreEqual(DockIconVisualState.Full, await provider.GetVisualStateAsync(DockIconRole.Trash));
+        Assert.AreEqual(2, query.CallCount, "A new query may start only after the previous synchronous call has finished.");
+    }
+
+    [TestMethod]
+    public async Task RecycleBinWaitCancellationCancelsOnlyTheWaitAndDoesNotPretendNativeCallStopped()
+    {
+        using var query = new BlockingRecycleBinStatusQuery(new WindowsRecycleBinStatusQueryResult(true, 0));
+        var diagnostics = new List<WindowsRecycleBinQueryDiagnostic>();
+        var provider = new WindowsDockIconVisualStateProvider(
+            query,
+            TimeSpan.FromSeconds(2),
+            diagnostics.Add);
+        using var cancellation = new CancellationTokenSource();
+
+        try
+        {
+            var pending = provider.GetVisualStateAsync(DockIconRole.Trash, cancellation.Token).AsTask();
+            Assert.IsTrue(query.WaitUntilStarted(TimeSpan.FromSeconds(1)));
+            cancellation.Cancel();
+
+            await Assert.ThrowsExactlyAsync<TaskCanceledException>(async () => await pending);
+            Assert.IsTrue(diagnostics.Any(item => item.Event == "recycle-bin-wait-cancelled" && item.NativeCallStillRunning));
+            Assert.AreEqual(1, query.CallCount);
+        }
+        finally
+        {
+            query.Release();
+        }
+        Assert.IsTrue(query.WaitUntilFinished(TimeSpan.FromSeconds(1)));
+    }
+
+    [TestMethod]
+    public async Task SlowTrashStateQueryDoesNotBlockOtherRolePreparation()
+    {
+        using var query = new BlockingRecycleBinStatusQuery(new WindowsRecycleBinStatusQueryResult(true, 2));
+        var provider = new WindowsDockIconVisualStateProvider(query, TimeSpan.FromSeconds(2));
+        var slowTrash = provider.GetVisualStateAsync(DockIconRole.Trash).AsTask();
+        try
+        {
+            Assert.IsTrue(query.WaitUntilStarted(TimeSpan.FromSeconds(1)));
+            var unrelated = await provider.GetVisualStateAsync(DockIconRole.Finder);
+
+            Assert.AreEqual(DockIconVisualState.Default, unrelated);
+            Assert.IsFalse(slowTrash.IsCompleted);
+        }
+        finally
+        {
+            query.Release();
+        }
+
+        Assert.IsTrue(query.WaitUntilFinished(TimeSpan.FromSeconds(1)));
+        Assert.AreEqual(DockIconVisualState.Full, await slowTrash);
+    }
+
+    [TestMethod]
+    public async Task RecycleBinQueryExceptionFallsBackToUnknown()
+    {
+        var provider = new WindowsDockIconVisualStateProvider(new ThrowingRecycleBinStatusQuery());
+
+        Assert.AreEqual(DockIconVisualState.Unknown, await provider.GetVisualStateAsync(DockIconRole.Trash));
+    }
+
     private sealed class FakeRecycleBinStatusQuery(WindowsRecycleBinStatusQueryResult result) : IWindowsRecycleBinStatusQuery
     {
         public WindowsRecycleBinStatusQueryResult QueryAllDrives() => result;
+    }
+
+    private sealed class ThrowingRecycleBinStatusQuery : IWindowsRecycleBinStatusQuery
+    {
+        public WindowsRecycleBinStatusQueryResult QueryAllDrives() => throw new InvalidOperationException("simulated query failure");
+    }
+
+    private sealed class BlockingRecycleBinStatusQuery(WindowsRecycleBinStatusQueryResult result) : IWindowsRecycleBinStatusQuery, IDisposable
+    {
+        private readonly ManualResetEventSlim _started = new();
+        private readonly ManualResetEventSlim _release = new();
+        private readonly ManualResetEventSlim _finished = new();
+        private int _callCount;
+
+        public int CallCount => Volatile.Read(ref _callCount);
+
+        public WindowsRecycleBinStatusQueryResult QueryAllDrives()
+        {
+            Interlocked.Increment(ref _callCount);
+            _started.Set();
+            try
+            {
+                _release.Wait();
+                return result;
+            }
+            finally
+            {
+                _finished.Set();
+            }
+        }
+
+        public bool WaitUntilStarted(TimeSpan timeout) => _started.Wait(timeout);
+
+        public bool WaitUntilFinished(TimeSpan timeout) => _finished.Wait(timeout);
+
+        public void Release() => _release.Set();
+
+        public void Dispose()
+        {
+            _started.Dispose();
+            _release.Dispose();
+            _finished.Dispose();
+        }
     }
 
     private static byte[] MinimalPngHeader(uint width, uint height)

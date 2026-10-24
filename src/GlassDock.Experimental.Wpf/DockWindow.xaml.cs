@@ -7,6 +7,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Interop;
 using GlassDock.App;
 using GlassDock.Core;
 
@@ -25,9 +26,16 @@ public partial class DockWindow : Window
     private readonly ExperimentalDockDiagnostics? _diagnostics;
     private readonly Stopwatch _startupTimer;
     private readonly Dictionary<DockItemId, ImageSource?> _iconCache = [];
+    private readonly Dictionary<DockItemId, IconLoadState> _iconLoadStates = [];
+    private readonly Dictionary<DockItemId, IconVisual> _iconVisuals = [];
     private CancellationTokenSource? _catalogLoadCancellation;
     private CancellationTokenSource? _iconLoadCancellation;
     private bool _vertical;
+    private bool _layoutPrepared;
+    private bool _visibleMilestoneRecorded;
+    private bool _contentRenderedMilestoneRecorded;
+    private bool _initialIconLoadStarted;
+    private bool _iconRefreshRequested;
 
     public DockWindow(
         DockApplicationSession session,
@@ -42,6 +50,10 @@ public partial class DockWindow : Window
         _diagnostics = diagnostics;
         _startupTimer = startupTimer ?? throw new ArgumentNullException(nameof(startupTimer));
         _iconResolver = iconResolver ?? throw new ArgumentNullException(nameof(iconResolver));
+        SourceInitialized += Window_SourceInitialized;
+        IsVisibleChanged += Window_IsVisibleChanged;
+        LayoutUpdated += Window_LayoutUpdated;
+        ContentRendered += Window_ContentRendered;
         ExecutionModeLabel.Text = session.ExecutionMode == DockExecutionMode.PreviewOnly
             ? "PREVIEW ONLY · APP COMMANDS BLOCKED"
             : "SHELL COMMANDS ENABLED · EXPERIMENTAL";
@@ -57,11 +69,107 @@ public partial class DockWindow : Window
         RenderState();
     }
 
-    private async void Window_Loaded(object sender, RoutedEventArgs e)
+    private void Window_SourceInitialized(object? sender, EventArgs e)
     {
+        var handle = new WindowInteropHelper(this).Handle;
+        _diagnostics?.Record("window-hwnd-created", _startupTimer.Elapsed, new
+        {
+            Hwnd = ToHwndString(handle),
+            ProcessId = Environment.ProcessId,
+            HandleNonZero = handle != IntPtr.Zero
+        });
+    }
+
+    private void Window_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        if (IsVisible && !_visibleMilestoneRecorded)
+        {
+            _visibleMilestoneRecorded = true;
+            _diagnostics?.Record("window-visible", _startupTimer.Elapsed, GetWindowMilestoneDetails());
+        }
+    }
+
+    private void Window_LayoutUpdated(object? sender, EventArgs e)
+    {
+        TryRecordLayoutPrepared();
+    }
+
+    private void Window_ContentRendered(object? sender, EventArgs e)
+    {
+        TryRecordLayoutPrepared();
+        if (!_contentRenderedMilestoneRecorded)
+        {
+            _contentRenderedMilestoneRecorded = true;
+            _diagnostics?.Record("window-content-rendered", _startupTimer.Elapsed, GetWindowMilestoneDetails());
+        }
+
+        if (_initialIconLoadStarted || !IsLoaded)
+            return;
+        _initialIconLoadStarted = true;
+        StartCatalogLoad();
+        StartStateIconLoading();
+        if (!string.IsNullOrWhiteSpace(_loadDiagnostic)
+            && !string.Equals(_loadDiagnostic, "DefaultedMissing", StringComparison.Ordinal))
+            StatusText($"Configuration load: {_loadDiagnostic}");
+    }
+
+    private void TryRecordLayoutPrepared()
+    {
+        if (_layoutPrepared || !IsLoaded || ActualWidth <= 0 || ActualHeight <= 0)
+            return;
+
+        var handle = new WindowInteropHelper(this).Handle;
+        if (handle == IntPtr.Zero)
+            return;
+
+        _layoutPrepared = true;
+        LayoutUpdated -= Window_LayoutUpdated;
+        _diagnostics?.Record("window-layout-prepared", _startupTimer.Elapsed, GetWindowMilestoneDetails());
+    }
+
+    private void Window_Loaded(object sender, RoutedEventArgs e)
+    {
+        _diagnostics?.Record("window-wpf-loaded-event", _startupTimer.Elapsed, GetWindowMilestoneDetails());
+    }
+
+    private object GetWindowMilestoneDetails()
+    {
+        var handle = new WindowInteropHelper(this).Handle;
+        var dpi = VisualTreeHelper.GetDpi(this);
+        return new
+        {
+            Hwnd = ToHwndString(handle),
+            ProcessId = Environment.ProcessId,
+            Visible = IsVisible,
+            LayoutPrepared = _layoutPrepared,
+            ContentRendered = _contentRenderedMilestoneRecorded,
+            LeftDip = Left,
+            TopDip = Top,
+            WidthDip = ActualWidth,
+            HeightDip = ActualHeight,
+            DpiScaleX = dpi.DpiScaleX,
+            DpiScaleY = dpi.DpiScaleY,
+            IconSizeDip = IconSize,
+            IconPixelsAtWindowDpiX = IconSize * dpi.DpiScaleX,
+            IconPixelsAtWindowDpiY = IconSize * dpi.DpiScaleY
+        };
+    }
+
+    private static string ToHwndString(IntPtr handle) => $"0x{handle.ToInt64():X}";
+
+    private void StartCatalogLoad()
+    {
+        if (_catalogLoadCancellation is not null || !IsLoaded)
+            return;
+
         var cancellation = new CancellationTokenSource();
         _catalogLoadCancellation = cancellation;
-        var catalogTimer = Stopwatch.StartNew();
+        _ = LoadCatalogAsync(cancellation);
+    }
+
+    private async Task LoadCatalogAsync(CancellationTokenSource cancellation)
+    {
+        var timer = Stopwatch.StartNew();
         StatusText("Loading Windows application catalog…");
         try
         {
@@ -72,8 +180,9 @@ public partial class DockWindow : Window
                 StatusText($"{result.Applications.Count} applications discovered · none were pinned automatically");
             else
                 StatusText($"Application discovery unavailable ({result.DiagnosticCode})");
-            _diagnostics?.Record("catalog-load-completed", catalogTimer.Elapsed, new
+            _diagnostics?.Record("catalog-load-completed", timer.Elapsed, new
             {
+                ProcessId = Environment.ProcessId,
                 Status = result.Status.ToString(),
                 Count = result.Applications.Count,
                 result.DuplicateCount,
@@ -83,12 +192,13 @@ public partial class DockWindow : Window
         }
         catch (OperationCanceledException)
         {
-            return;
+            _diagnostics?.Record("catalog-load-cancelled", timer.Elapsed);
         }
         catch (Exception exception)
         {
-            StatusText($"Application discovery failed ({exception.GetType().Name})");
-            _diagnostics?.Record("catalog-load-failed", catalogTimer.Elapsed, new { Error = exception.GetType().Name });
+            if (IsLoaded)
+                StatusText($"Application discovery failed ({exception.GetType().Name})");
+            _diagnostics?.Record("catalog-load-failed", timer.Elapsed, new { Error = exception.GetType().Name });
         }
         finally
         {
@@ -96,29 +206,6 @@ public partial class DockWindow : Window
                 _catalogLoadCancellation = null;
             cancellation.Dispose();
         }
-
-        if (!IsLoaded)
-            return;
-        await LoadStateIconsAsync();
-        if (!IsLoaded)
-            return;
-        RenderState();
-        var dpi = VisualTreeHelper.GetDpi(this);
-        _diagnostics?.Record("window-loaded", _startupTimer.Elapsed, new
-        {
-            LeftDip = Left,
-            TopDip = Top,
-            WidthDip = ActualWidth,
-            HeightDip = ActualHeight,
-            DpiScaleX = dpi.DpiScaleX,
-            DpiScaleY = dpi.DpiScaleY,
-            IconSizeDip = IconSize,
-            IconPixelsAtWindowDpiX = IconSize * dpi.DpiScaleX,
-            IconPixelsAtWindowDpiY = IconSize * dpi.DpiScaleY
-        });
-        if (!string.IsNullOrWhiteSpace(_loadDiagnostic)
-            && !string.Equals(_loadDiagnostic, "DefaultedMissing", StringComparison.Ordinal))
-            StatusText($"Configuration load: {_loadDiagnostic}");
     }
 
     private void Window_Closed(object? sender, EventArgs e)
@@ -126,6 +213,8 @@ public partial class DockWindow : Window
         _catalogLoadCancellation?.Cancel();
         _iconLoadCancellation?.Cancel();
         _iconCache.Clear();
+        _iconLoadStates.Clear();
+        _iconVisuals.Clear();
         SectionsHost.Children.Clear();
     }
 
@@ -136,7 +225,7 @@ public partial class DockWindow : Window
         var picker = new ApplicationPickerWindow(_session, _diagnostics) { Owner = this };
         _ = picker.ShowDialog();
         RenderState();
-        _ = LoadStateIconsAsync();
+        StartStateIconLoading();
     }
 
     private void PositionButton_Click(object sender, RoutedEventArgs e)
@@ -212,6 +301,7 @@ public partial class DockWindow : Window
     private void RenderState()
     {
         SectionsHost.Children.Clear();
+        _iconVisuals.Clear();
         AddSection("PINNED", DockSection.PinnedApplications, _session.State.PinnedApplications, "No pinned apps");
 
         if (_session.State.Preferences.ShowRecentApplications)
@@ -306,7 +396,9 @@ public partial class DockWindow : Window
         };
         var fallback = new TextBlock
         {
-            Text = MakeFallbackGlyph(item.DisplayName),
+            Text = _iconLoadStates.GetValueOrDefault(item.Id) == IconLoadState.Loading
+                ? "…"
+                : MakeFallbackGlyph(item.DisplayName),
             FontSize = 16,
             FontWeight = FontWeights.SemiBold,
             Foreground = Brushes.White,
@@ -321,6 +413,7 @@ public partial class DockWindow : Window
         };
         iconGrid.Children.Add(image);
         iconGrid.Children.Add(fallback);
+        _iconVisuals[item.Id] = new IconVisual(image, fallback, item.DisplayName);
         var button = new Button
         {
             Width = _vertical ? 128 : 70,
@@ -369,12 +462,23 @@ public partial class DockWindow : Window
         return button;
     }
 
-    private async Task LoadStateIconsAsync()
+    private void StartStateIconLoading()
     {
+        if (!IsLoaded)
+            return;
+        if (_iconLoadCancellation is not null)
+        {
+            _iconRefreshRequested = true;
+            return;
+        }
+
         var cancellation = new CancellationTokenSource();
-        var previous = _iconLoadCancellation;
         _iconLoadCancellation = cancellation;
-        previous?.Cancel();
+        _ = LoadStateIconsAsync(cancellation);
+    }
+
+    private async Task LoadStateIconsAsync(CancellationTokenSource cancellation)
+    {
         var token = cancellation.Token;
         var items = _session.State.PinnedApplications
             .Concat(_session.State.VisibleRecentApplications)
@@ -383,80 +487,153 @@ public partial class DockWindow : Window
             .ToArray();
 
         var timer = Stopwatch.StartNew();
+        _diagnostics?.Record("state-icon-load-started", timer.Elapsed, new { Requested = items.Length, MaxConcurrentLoads = 2 });
+        foreach (var item in items)
+        {
+            _iconLoadStates[item.Id] = IconLoadState.Loading;
+            UpdateIconVisual(item.Id, null, IconLoadState.Loading);
+        }
+
         var processed = 0;
         try
         {
-            foreach (var item in items)
+            await DockIconLoadBatch.RunAsync(
+                items,
+                maxConcurrency: 2,
+                async (item, loadToken) =>
+                {
+                    await LoadStateIconAsync(item, loadToken);
+                    Interlocked.Increment(ref processed);
+                },
+                token);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            _diagnostics?.Record("state-icon-load-cancelled", timer.Elapsed, new { Requested = items.Length, Processed = processed });
+        }
+        catch (Exception exception)
+        {
+            _diagnostics?.Record("state-icon-load-failed", timer.Elapsed, new
             {
-                if (token.IsCancellationRequested || !IsLoaded)
-                    return;
-                DockIconResolutionResult? result = null;
-                var finalSource = (DockIconResolutionSource?)null;
-                var finalStatus = DockApplicationIconStatus.Failed;
-                var finalVisualState = (DockIconVisualState?)null;
-                string? diagnosticCode = null;
-                string? decodeFailure = null;
-                ImageSource? image = null;
-                try
-                {
-                    result = await _iconResolver.ResolveAsync(item, GetIconTheme(), token);
-                    if (token.IsCancellationRequested || !IsLoaded)
-                        return;
-                    finalSource = result.Source;
-                    finalStatus = result.Status;
-                    finalVisualState = result.VisualState;
-                    diagnosticCode = result.DiagnosticCode;
-                    if (result.Status == DockApplicationIconStatus.Found && result.Asset is not null)
-                    {
-                        try
-                        {
-                            image = DecodeIconAsset(result.Asset);
-                        }
-                        catch (Exception) when (result.Source != DockIconResolutionSource.WindowsShell)
-                        {
-                            var fallback = await _iconResolver.ResolveWindowsShellFallbackAsync(item, token);
-                            finalSource = fallback.Source;
-                            finalStatus = fallback.Status;
-                            finalVisualState ??= fallback.VisualState;
-                            diagnosticCode = fallback.DiagnosticCode;
-                            if (fallback.Status == DockApplicationIconStatus.Found && fallback.Asset is not null)
-                                image = DecodeIconAsset(fallback.Asset);
-                        }
-                    }
-                    _iconCache[item.Id] = image;
-                }
-                catch (OperationCanceledException)
-                {
-                    return;
-                }
-                catch (Exception)
-                {
-                    _iconCache[item.Id] = null;
-                    finalStatus = DockApplicationIconStatus.Failed;
-                    decodeFailure = "icon-load-exception";
-                }
-                _diagnostics?.Record("dock-icon-resolved", timer.Elapsed, new
-                {
-                    ItemId = item.Id.ToString(),
-                    item.DisplayName,
-                    Role = result?.Role?.ToString(),
-                    VisualState = finalVisualState?.ToString(),
-                    Source = finalSource?.ToString(),
-                    Status = finalStatus.ToString(),
-                    Decoded = image is not null,
-                    DiagnosticCode = diagnosticCode,
-                    DecodeFailure = decodeFailure
-                });
-                processed++;
-            }
+                Requested = items.Length,
+                Processed = processed,
+                Error = exception.GetType().Name
+            });
         }
         finally
         {
             if (ReferenceEquals(_iconLoadCancellation, cancellation))
                 _iconLoadCancellation = null;
             cancellation.Dispose();
-            _diagnostics?.Record("state-icon-load-completed", timer.Elapsed, new { Requested = items.Length, Processed = processed });
+            if (IsLoaded && _iconRefreshRequested)
+            {
+                _iconRefreshRequested = false;
+                StartStateIconLoading();
+            }
+            _diagnostics?.Record("state-icon-load-completed", timer.Elapsed, new
+            {
+                Requested = items.Length,
+                Processed = processed,
+                Failed = items.Count(item => _iconLoadStates.GetValueOrDefault(item.Id) == IconLoadState.Failed)
+            });
         }
+    }
+
+    private async Task LoadStateIconAsync(DockProjectItem item, CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested || !IsLoaded)
+            return;
+
+        var timer = Stopwatch.StartNew();
+        _diagnostics?.Record("dock-icon-resolution-started", timer.Elapsed, new
+        {
+            ItemId = item.Id.ToString(),
+            item.DisplayName,
+            ProcessId = Environment.ProcessId
+        });
+        DockIconResolutionResult? result = null;
+        var finalSource = (DockIconResolutionSource?)null;
+        var finalStatus = DockApplicationIconStatus.Failed;
+        var finalVisualState = (DockIconVisualState?)null;
+        string? diagnosticCode = null;
+        string? decodeFailure = null;
+        ImageSource? image = null;
+        try
+        {
+            result = await _iconResolver.ResolveAsync(item, GetIconTheme(), cancellationToken);
+            if (cancellationToken.IsCancellationRequested || !IsLoaded)
+                return;
+            finalSource = result.Source;
+            finalStatus = result.Status;
+            finalVisualState = result.VisualState;
+            diagnosticCode = result.DiagnosticCode;
+            if (result.Status == DockApplicationIconStatus.Found && result.Asset is not null)
+            {
+                try
+                {
+                    image = DecodeIconAsset(result.Asset);
+                }
+                catch (Exception) when (result.Source != DockIconResolutionSource.WindowsShell)
+                {
+                    var fallback = await _iconResolver.ResolveWindowsShellFallbackAsync(item, cancellationToken);
+                    finalSource = fallback.Source;
+                    finalStatus = fallback.Status;
+                    finalVisualState ??= fallback.VisualState;
+                    diagnosticCode = fallback.DiagnosticCode;
+                    if (fallback.Status == DockApplicationIconStatus.Found && fallback.Asset is not null)
+                        image = DecodeIconAsset(fallback.Asset);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || !IsLoaded)
+        {
+            return;
+        }
+        catch (Exception)
+        {
+            finalStatus = DockApplicationIconStatus.Failed;
+            decodeFailure = "icon-load-exception";
+        }
+
+        if (!IsLoaded)
+            return;
+        _iconCache[item.Id] = image;
+        var loadState = image is null ? IconLoadState.Failed : IconLoadState.Loaded;
+        _iconLoadStates[item.Id] = loadState;
+        UpdateIconVisual(item.Id, image, loadState);
+        _diagnostics?.Record("dock-icon-resolved", timer.Elapsed, new
+        {
+            ItemId = item.Id.ToString(),
+            item.DisplayName,
+            ProcessId = Environment.ProcessId,
+            Role = result?.Role?.ToString(),
+            VisualState = finalVisualState?.ToString(),
+            Source = finalSource?.ToString(),
+            Status = finalStatus.ToString(),
+            LoadState = loadState.ToString(),
+            Decoded = image is not null,
+            DiagnosticCode = diagnosticCode,
+            DecodeFailure = decodeFailure
+        });
+    }
+
+    private void UpdateIconVisual(DockItemId id, ImageSource? imageSource, IconLoadState state)
+    {
+        if (!_iconVisuals.TryGetValue(id, out var visual))
+            return;
+
+        visual.Image.Source = imageSource;
+        visual.Image.Visibility = imageSource is null ? Visibility.Collapsed : Visibility.Visible;
+        visual.Fallback.Text = state == IconLoadState.Loading
+            ? "…"
+            : MakeFallbackGlyph(visual.DisplayName);
+        visual.Fallback.Visibility = imageSource is null ? Visibility.Visible : Visibility.Collapsed;
+        visual.Fallback.ToolTip = state switch
+        {
+            IconLoadState.Loading => "Loading icon…",
+            IconLoadState.Failed => "Icon unavailable; showing a safe fallback",
+            _ => null
+        };
     }
 
     private async Task ExecuteItemAsync(DockProjectItem item)
@@ -632,6 +809,15 @@ public partial class DockWindow : Window
 
     private void StatusText(string message) =>
         StatusLabel.Text = message;
+
+    private enum IconLoadState
+    {
+        Loading = 1,
+        Loaded = 2,
+        Failed = 3
+    }
+
+    private sealed record IconVisual(Image Image, TextBlock Fallback, string DisplayName);
 
     private sealed record DockTileDragData(
         DockItemId ItemId,
