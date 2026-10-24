@@ -80,6 +80,9 @@ public sealed class WindowsShellProvider : IWindowsShellProvider, IDockApplicati
 
         if (targetIdentity.Scheme == DockIdentityScheme.WindowsSystemRole)
         {
+            if (string.Equals(targetIdentity.ComparisonKey, "windows.recycle-bin", StringComparison.OrdinalIgnoreCase))
+                return _icons.ResolveIconAsync("shell:RecycleBinFolder", cancellationToken);
+
             if (!string.Equals(targetIdentity.ComparisonKey, "windows.file-manager", StringComparison.OrdinalIgnoreCase))
             {
                 return ValueTask.FromResult(WindowsShellIconResult.Unavailable(
@@ -96,6 +99,19 @@ public sealed class WindowsShellProvider : IWindowsShellProvider, IDockApplicati
             }
 
             return _icons.ResolveIconAsync(Path.Combine(windowsDirectory, "explorer.exe"), cancellationToken);
+        }
+
+        if (targetIdentity.Scheme == DockIdentityScheme.WindowsKnownFolderId
+            && WindowsKnownFolderPathProvider.IsDownloadsIdentity(targetIdentity))
+        {
+            var downloadsPath = WindowsKnownFolderPathProvider.GetDownloadsPath();
+            if (string.IsNullOrWhiteSpace(downloadsPath))
+            {
+                return ValueTask.FromResult(WindowsShellIconResult.Unavailable(
+                    WindowsShellIconStatus.Failed,
+                    "downloads-known-folder-unavailable"));
+            }
+            return _icons.ResolveIconAsync(downloadsPath, cancellationToken);
         }
 
         string source;

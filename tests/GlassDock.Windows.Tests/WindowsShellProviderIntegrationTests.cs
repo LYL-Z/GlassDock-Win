@@ -54,6 +54,22 @@ public sealed class WindowsShellProviderIntegrationTests
         Assert.IsNull(icon.Asset);
     }
 
+    [TestMethod]
+    public async Task RecycleBinIconUsesShellParsingNameWithoutQueryingOrChangingContents()
+    {
+        var extractor = new RecordingIconExtractor();
+        var provider = new WindowsShellProvider(
+            new SequenceDiscovery(WindowsShellApplicationDescriptor.FromAppUserModelId("Editor", "Contoso.Editor")),
+            extractor,
+            new WindowsShellCommandExecutor(new NoOpBackend()));
+        var recycleBin = DockTargetIdentity.Create(DockIdentityScheme.WindowsSystemRole, "windows.recycle-bin");
+
+        var result = await provider.ResolveIconAsync(recycleBin);
+
+        Assert.AreEqual("shell:RecycleBinFolder", extractor.LastParsingName);
+        Assert.AreEqual(WindowsShellIconStatus.NotFound, result.Status);
+    }
+
     private sealed class SequenceDiscovery(params WindowsShellApplicationDescriptor[] descriptors) : IWindowsApplicationDiscovery
     {
         private int _index;
