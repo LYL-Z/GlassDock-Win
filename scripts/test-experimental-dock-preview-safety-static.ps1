@@ -110,8 +110,11 @@ $safetyPath = Join-Path $PSScriptRoot 'interactive-test-safety.ps1'
 $safetyText = [IO.File]::ReadAllText($safetyPath)
 if ($runnerText -match 'PreviousDesktopState\.Foreground\.(Hwnd|ProcessId)\s*=\s*0' -or
     $safetyText -notmatch '\$Session\.Manifest\.ForegroundWindowHandle' -or
-    $safetyText -notmatch '\$Session\.Manifest\.ForegroundProcessId') {
-    throw 'The run must retain the original desktop snapshot and keep foreground-restoration policy separate.'
+    $safetyText -notmatch '\$Session\.Manifest\.ForegroundProcessId' -or
+    $safetyText -notmatch 'SetThreadDpiAwarenessContext\(\$previousDpiContext\)' -or
+    $safetyText -notmatch 'finally\s*\{\s*if \(\$dpiContextSwitchSucceeded\)' -or
+    $safetyText -notmatch 'Foreground policy left no run-owned process focused') {
+    throw 'The run must restore its temporary DPI thread context, retain the pre-state snapshot, and keep focus policy separate.'
 }
 
 $testsPath = Join-Path $repoRoot 'tests\GlassDock.App.Tests\DockApplicationSessionTests.cs'

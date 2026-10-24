@@ -99,40 +99,50 @@ function Get-M0InteractiveDesktopSnapshot {
     # UI Automation can otherwise change the caller thread's DPI virtualization context.
     $previousDpiContext = [GlassDockM0SafetyNative]::SetThreadDpiAwarenessContext([IntPtr](-4))
     $dpiContextSwitchSucceeded = $previousDpiContext -ne [IntPtr]::Zero
-    $foreground = [GlassDockM0SafetyNative]::GetForegroundWindow()
-    [uint32]$foregroundPid = 0
-    if ($foreground -ne [IntPtr]::Zero) { [void][GlassDockM0SafetyNative]::GetWindowThreadProcessId($foreground, [ref]$foregroundPid) }
-    $foregroundRect = [GlassDockM0SafetyRect]::new()
-    $foregroundHasRect = $foreground -ne [IntPtr]::Zero -and [GlassDockM0SafetyNative]::GetWindowRect($foreground, [ref]$foregroundRect)
-    $taskbar = [GlassDockM0SafetyNative]::FindWindow('Shell_TrayWnd', $null)
-    $taskbarRect = [GlassDockM0SafetyRect]::new()
-    $taskbarHasRect = $taskbar -ne [IntPtr]::Zero -and [GlassDockM0SafetyNative]::GetWindowRect($taskbar, [ref]$taskbarRect)
-    $cursor = [GlassDockM0SafetyPoint]::new()
-    $cursorAvailable = [GlassDockM0SafetyNative]::GetCursorPos([ref]$cursor)
-    $bounds = [ordered]@{
-        PrimaryWidth = [GlassDockM0SafetyNative]::GetSystemMetrics(0)
-        PrimaryHeight = [GlassDockM0SafetyNative]::GetSystemMetrics(1)
-        VirtualLeft = [GlassDockM0SafetyNative]::GetSystemMetrics(76)
-        VirtualTop = [GlassDockM0SafetyNative]::GetSystemMetrics(77)
-        VirtualWidth = [GlassDockM0SafetyNative]::GetSystemMetrics(78)
-        VirtualHeight = [GlassDockM0SafetyNative]::GetSystemMetrics(79)
+    try {
+        $foreground = [GlassDockM0SafetyNative]::GetForegroundWindow()
+        [uint32]$foregroundPid = 0
+        if ($foreground -ne [IntPtr]::Zero) { [void][GlassDockM0SafetyNative]::GetWindowThreadProcessId($foreground, [ref]$foregroundPid) }
+        $foregroundRect = [GlassDockM0SafetyRect]::new()
+        $foregroundHasRect = $foreground -ne [IntPtr]::Zero -and [GlassDockM0SafetyNative]::GetWindowRect($foreground, [ref]$foregroundRect)
+        $taskbar = [GlassDockM0SafetyNative]::FindWindow('Shell_TrayWnd', $null)
+        $taskbarRect = [GlassDockM0SafetyRect]::new()
+        $taskbarHasRect = $taskbar -ne [IntPtr]::Zero -and [GlassDockM0SafetyNative]::GetWindowRect($taskbar, [ref]$taskbarRect)
+        $cursor = [GlassDockM0SafetyPoint]::new()
+        $cursorAvailable = [GlassDockM0SafetyNative]::GetCursorPos([ref]$cursor)
+        $bounds = [ordered]@{
+            PrimaryWidth = [GlassDockM0SafetyNative]::GetSystemMetrics(0)
+            PrimaryHeight = [GlassDockM0SafetyNative]::GetSystemMetrics(1)
+            VirtualLeft = [GlassDockM0SafetyNative]::GetSystemMetrics(76)
+            VirtualTop = [GlassDockM0SafetyNative]::GetSystemMetrics(77)
+            VirtualWidth = [GlassDockM0SafetyNative]::GetSystemMetrics(78)
+            VirtualHeight = [GlassDockM0SafetyNative]::GetSystemMetrics(79)
+        }
+        return [ordered]@{
+            CapturedAtUtc = [DateTimeOffset]::UtcNow.ToString('O')
+            Foreground = [ordered]@{
+                Hwnd = $foreground.ToInt64()
+                ProcessId = $foregroundPid
+                Title = if ($foreground -ne [IntPtr]::Zero) { [GlassDockM0SafetyNative]::GetTitle($foreground) } else { '' }
+                Bounds = if ($foregroundHasRect) { [ordered]@{ Left=$foregroundRect.Left; Top=$foregroundRect.Top; Right=$foregroundRect.Right; Bottom=$foregroundRect.Bottom } } else { $null }
+            }
+            Taskbar = [ordered]@{
+                Hwnd = $taskbar.ToInt64()
+                Visible = $taskbar -ne [IntPtr]::Zero -and [GlassDockM0SafetyNative]::IsWindowVisible($taskbar)
+                Bounds = if ($taskbarHasRect) { [ordered]@{ Left=$taskbarRect.Left; Top=$taskbarRect.Top; Right=$taskbarRect.Right; Bottom=$taskbarRect.Bottom } } else { $null }
+            }
+            Cursor = [ordered]@{ Available=$cursorAvailable; X=$cursor.X; Y=$cursor.Y }
+            ScreenBounds = $bounds
+            CoordinateSpace = if ($dpiContextSwitchSucceeded) { 'PhysicalPixels; thread DPI context was temporarily Per-Monitor-V2 and restored' } else { 'Caller DPI context unchanged; values may be virtualized' }
+        }
     }
-    return [ordered]@{
-        CapturedAtUtc = [DateTimeOffset]::UtcNow.ToString('O')
-        Foreground = [ordered]@{
-            Hwnd = $foreground.ToInt64()
-            ProcessId = $foregroundPid
-            Title = if ($foreground -ne [IntPtr]::Zero) { [GlassDockM0SafetyNative]::GetTitle($foreground) } else { '' }
-            Bounds = if ($foregroundHasRect) { [ordered]@{ Left=$foregroundRect.Left; Top=$foregroundRect.Top; Right=$foregroundRect.Right; Bottom=$foregroundRect.Bottom } } else { $null }
+    finally {
+        if ($dpiContextSwitchSucceeded) {
+            $restoredDpiContext = [GlassDockM0SafetyNative]::SetThreadDpiAwarenessContext($previousDpiContext)
+            if ($restoredDpiContext -eq [IntPtr]::Zero) {
+                throw 'Could not restore the interactive test runner thread DPI-awareness context.'
+            }
         }
-        Taskbar = [ordered]@{
-            Hwnd = $taskbar.ToInt64()
-            Visible = $taskbar -ne [IntPtr]::Zero -and [GlassDockM0SafetyNative]::IsWindowVisible($taskbar)
-            Bounds = if ($taskbarHasRect) { [ordered]@{ Left=$taskbarRect.Left; Top=$taskbarRect.Top; Right=$taskbarRect.Right; Bottom=$taskbarRect.Bottom } } else { $null }
-        }
-        Cursor = [ordered]@{ Available=$cursorAvailable; X=$cursor.X; Y=$cursor.Y }
-        ScreenBounds = $bounds
-        CoordinateSpace = if ($dpiContextSwitchSucceeded) { 'PhysicalPixels; thread DPI context is Per-Monitor-V2' } else { 'Caller DPI context unchanged; values may be virtualized' }
     }
 }
 
@@ -494,8 +504,8 @@ function Stop-M0InteractiveTestSession {
     # intact even when a caller chooses to preserve any focus changes made by the user.
     $originalHwnd = [IntPtr][long]$Session.Manifest.ForegroundWindowHandle
     $originalProcessId = [uint32]$Session.Manifest.ForegroundProcessId
-    $focusRestore = $true
-    $focusDetails = 'No foreground HWND was captured.'
+    $focusRestore = $false
+    $focusDetails = ''
     if ($originalHwnd -ne [IntPtr]::Zero) {
         $actualProcessId = [uint32]0
         $validWindow = [GlassDockM0SafetyNative]::IsWindow($originalHwnd)
@@ -513,7 +523,14 @@ function Stop-M0InteractiveTestSession {
             $focusDetails += "; verified=$focusRestore; attempts=12"
         }
     }
-    Add-M0InteractiveRestorationCheck $Session 'Foreground window restored' $focusRestore $focusDetails
+    else {
+        $currentForeground = Get-M0InteractiveDesktopSnapshot
+        $ownedProcessIds = @($Session.ProcessIdentities | ForEach-Object { [int]$_.ProcessId })
+        $ownedForeground = $ownedProcessIds -contains [int]$currentForeground.Foreground.ProcessId
+        $focusRestore = -not $ownedForeground
+        $focusDetails = "No focus target was forced to preserve user focus choices; current hwnd=$($currentForeground.Foreground.Hwnd), pid=$($currentForeground.Foreground.ProcessId), runOwned=$ownedForeground."
+    }
+    Add-M0InteractiveRestorationCheck $Session 'Foreground policy left no run-owned process focused' $focusRestore $focusDetails
 
     $cursorRestorePassed = $true
     $cursorDetails = 'No synthetic pointer movement was registered.'
