@@ -67,6 +67,38 @@ public sealed class DockApplicationSessionTests
         Assert.AreEqual(4, store.SaveCount);
         Assert.AreEqual(0, session.State.RecentApplications.Count);
         Assert.AreEqual(0, session.State.FilesAndFolders.Count);
+        Assert.AreEqual(0, provider.Commands.Count, "Reorder and remove must not dispatch Shell commands.");
+    }
+
+    [TestMethod]
+    public async Task RepeatedCatalogRefreshPreservesPinnedIdsOrderAndDoesNotPersistDiscoveredApps()
+    {
+        var provider = new FakeProvider();
+        var store = new FakeStateStore(DockState.CreateDefault());
+        var session = new DockApplicationSession(store.LoadState(), store, provider);
+        var first = new DockApplicationOption("First", Aumid("Contoso!First"));
+        var second = new DockApplicationOption("Second", Aumid("Contoso!Second"));
+        Assert.IsTrue(session.PinApplication(first).Changed);
+        Assert.IsTrue(session.PinApplication(second).Changed);
+        var pinnedBefore = session.State.PinnedApplications.Select(item => (item.Id, item.TargetIdentity)).ToArray();
+        var savesBeforeRefresh = store.SaveCount;
+        provider.Catalog = DockApplicationCatalogResult.Succeeded([
+            new DockApplicationOption("First renamed", Aumid("contoso!first")),
+            new DockApplicationOption("Third", Aumid("Contoso!Third")),
+            new DockApplicationOption("Second renamed", Aumid("contoso!second"))]);
+
+        for (var refresh = 0; refresh < 100; refresh++)
+        {
+            var result = await session.RefreshCatalogAsync();
+            Assert.AreEqual(DockApplicationCatalogStatus.Succeeded, result.Status);
+            Assert.AreEqual(3, result.Applications.Count);
+        }
+
+        CollectionAssert.AreEqual(pinnedBefore, session.State.PinnedApplications.Select(item => (item.Id, item.TargetIdentity)).ToArray());
+        Assert.AreEqual(3, session.State.PinnedApplications.Count, "Discovery must not auto-pin the third application.");
+        Assert.AreEqual(savesBeforeRefresh, store.SaveCount, "Catalog refreshes alone must not save or reorder Dock state.");
+        Assert.AreEqual(100, provider.DiscoveryCallCount);
+        Assert.AreEqual(0, provider.Commands.Count);
     }
 
     [TestMethod]
@@ -133,7 +165,7 @@ public sealed class DockApplicationSessionTests
                 "windows-foreground-policy-denied")
         };
         var store = new FakeStateStore(DockState.CreateDefault());
-        var session = new DockApplicationSession(store.LoadState(), store, provider);
+        var session = new DockApplicationSession(store.LoadState(), store, provider, DockExecutionMode.AllowShellCommands);
         var app = new DockApplicationOption("Editor", Aumid("Contoso!Editor"));
         session.PinApplication(app);
         var item = session.State.PinnedApplications.Single(candidate => candidate.TargetIdentity == app.TargetIdentity);
@@ -151,7 +183,7 @@ public sealed class DockApplicationSessionTests
     {
         var provider = new FakeProvider();
         var store = new FakeStateStore(DockState.CreateDefault());
-        var session = new DockApplicationSession(store.LoadState(), store, provider);
+        var session = new DockApplicationSession(store.LoadState(), store, provider, DockExecutionMode.AllowShellCommands);
         var app = new DockApplicationOption("Editor", Aumid("Contoso!Editor"));
         session.PinApplication(app);
         var item = session.State.PinnedApplications.Single(candidate => candidate.TargetIdentity == app.TargetIdentity);
@@ -177,7 +209,7 @@ public sealed class DockApplicationSessionTests
                 "windows-foreground-policy-denied")
         };
         var store = new FakeStateStore(DockState.CreateDefault());
-        var session = new DockApplicationSession(store.LoadState(), store, provider);
+        var session = new DockApplicationSession(store.LoadState(), store, provider, DockExecutionMode.AllowShellCommands);
         var app = new DockApplicationOption("Editor", Aumid("Contoso!Editor"));
         session.PinApplication(app);
         var item = session.State.PinnedApplications.Single(candidate => candidate.TargetIdentity == app.TargetIdentity);
@@ -201,6 +233,47 @@ public sealed class DockApplicationSessionTests
         Assert.IsNull(provider.LastCommand);
     }
 
+    [TestMethod]
+    public async Task PreviewOnlyBlocksLaunchActivateOpenAndApplicationInvocationBeforeProviderBoundary()
+    {
+        var provider = new FakeProvider();
+        var store = new FakeStateStore(DockState.CreateDefault());
+        var session = new DockApplicationSession(store.LoadState(), store, provider);
+        var app = new DockApplicationOption("Editor", Aumid("Contoso!Editor"));
+        Assert.IsTrue(session.PinApplication(app).Succeeded);
+        var item = session.State.PinnedApplications.Single(candidate => candidate.TargetIdentity == app.TargetIdentity);
+
+        foreach (var command in new[] { DockCommandKind.Launch, DockCommandKind.Activate, DockCommandKind.Open })
+        {
+            var result = await session.ExecuteAsync(item.Id, command);
+            Assert.AreEqual(DockCommandOutcome.BlockedByPolicy, result.Outcome);
+            Assert.AreEqual("preview-only-mode", result.DiagnosticCode);
+        }
+
+        var invokeResult = await session.InvokeApplicationAsync(item.Id);
+        Assert.AreEqual(DockCommandOutcome.BlockedByPolicy, invokeResult.Outcome);
+        Assert.AreEqual(0, provider.Commands.Count, "Preview mode must block at the session-to-provider boundary.");
+        Assert.AreEqual(DockExecutionMode.PreviewOnly, session.ExecutionMode);
+    }
+
+    [TestMethod]
+    public async Task MissingOrFailedIconIsReportedWithoutMutatingDockState()
+    {
+        var provider = new FakeProvider();
+        var store = new FakeStateStore(DockState.CreateDefault());
+        var session = new DockApplicationSession(store.LoadState(), store, provider);
+        var app = new DockApplicationOption("Editor", Aumid("Contoso!Editor"));
+        session.PinApplication(app);
+        var original = session.State;
+
+        var icon = await session.ResolveIconAsync(app.TargetIdentity);
+
+        Assert.AreEqual(DockApplicationIconStatus.NotFound, icon.Status);
+        Assert.IsNull(icon.Asset);
+        Assert.AreSame(original, session.State);
+        Assert.AreEqual(0, provider.Commands.Count);
+    }
+
     private static DockTargetIdentity Aumid(string value) =>
         DockTargetIdentity.Create(DockIdentityScheme.WindowsAppUserModelId, value);
 
@@ -214,11 +287,14 @@ public sealed class DockApplicationSessionTests
 
         public List<DockCommand> Commands { get; } = [];
 
+        public int DiscoveryCallCount { get; private set; }
+
         public DockCommand? LastCommand { get; private set; }
 
         public ValueTask<DockApplicationCatalogResult> DiscoverDockApplicationsAsync(CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            DiscoveryCallCount++;
             return ValueTask.FromResult(Catalog);
         }
 

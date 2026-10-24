@@ -163,6 +163,12 @@ public sealed record DockSessionMutationResult(
     DockStateChange Change,
     string? DiagnosticCode = null);
 
+public enum DockExecutionMode
+{
+    PreviewOnly = 1,
+    AllowShellCommands = 2
+}
+
 /// <summary>
 /// UI-framework-neutral orchestration for catalog refresh, Core state changes, persistence, and
 /// Shell commands. It never promotes observed apps to Recent without an actual activity event.
@@ -175,17 +181,23 @@ public sealed class DockApplicationSession
     public DockApplicationSession(
         DockState initialState,
         IDockStateStore stateStore,
-        IDockApplicationProvider applications)
+        IDockApplicationProvider applications,
+        DockExecutionMode executionMode = DockExecutionMode.PreviewOnly)
     {
+        if (!Enum.IsDefined(executionMode))
+            throw new ArgumentOutOfRangeException(nameof(executionMode));
         State = initialState ?? throw new ArgumentNullException(nameof(initialState));
         _stateStore = stateStore ?? throw new ArgumentNullException(nameof(stateStore));
         _applications = applications ?? throw new ArgumentNullException(nameof(applications));
+        ExecutionMode = executionMode;
         Catalog = DockApplicationCatalogResult.Succeeded([]);
     }
 
     public DockState State { get; private set; }
 
     public DockApplicationCatalogResult Catalog { get; private set; }
+
+    public DockExecutionMode ExecutionMode { get; }
 
     public async ValueTask<DockApplicationCatalogResult> RefreshCatalogAsync(CancellationToken cancellationToken = default)
     {
@@ -228,6 +240,10 @@ public sealed class DockApplicationSession
     {
         if (!State.TryFind(itemId, out var item) || item is null)
             return ValueTask.FromResult(new DockCommandResult(DockCommandOutcome.TargetNotFound, "dock-item-not-found"));
+
+        // This is the Shell execution boundary. UI affordances must never be the only protection.
+        if (ExecutionMode == DockExecutionMode.PreviewOnly)
+            return ValueTask.FromResult(new DockCommandResult(DockCommandOutcome.BlockedByPolicy, "preview-only-mode"));
 
         return _applications.ExecuteAsync(DockCommand.For(kind, item), cancellationToken);
     }

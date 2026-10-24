@@ -13,24 +13,31 @@ public partial class ApplicationPickerWindow : Window
     private const int MaximumVisibleEntries = 100;
     private const int MaximumIconsPerRefresh = 30;
     private readonly DockApplicationSession _session;
+    private readonly ExperimentalDockDiagnostics? _diagnostics;
     private readonly ObservableCollection<ApplicationEntry> _entries = [];
     private readonly Dictionary<DockTargetIdentity, ImageSource?> _iconCache = [];
+    private CancellationTokenSource? _catalogLoadCancellation;
     private CancellationTokenSource? _iconLoadCancellation;
     private IReadOnlyList<DockApplicationOption> _catalog = [];
 
-    public ApplicationPickerWindow(DockApplicationSession session)
+    public ApplicationPickerWindow(DockApplicationSession session, ExperimentalDockDiagnostics? diagnostics)
     {
         InitializeComponent();
         _session = session ?? throw new ArgumentNullException(nameof(session));
+        _diagnostics = diagnostics;
         ApplicationsList.ItemsSource = _entries;
     }
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
+        var cancellation = new CancellationTokenSource();
+        _catalogLoadCancellation = cancellation;
         StatusLabel.Text = "Discovering Windows applications…";
         try
         {
-            var result = await _session.RefreshCatalogAsync();
+            var result = await _session.RefreshCatalogAsync(cancellation.Token);
+            if (cancellation.IsCancellationRequested || !IsLoaded)
+                return;
             if (result.Status != DockApplicationCatalogStatus.Succeeded)
             {
                 StatusLabel.Text = $"Catalog unavailable ({result.DiagnosticCode})";
@@ -43,13 +50,30 @@ public partial class ApplicationPickerWindow : Window
             ApplyFilter();
             StatusLabel.Text = $"{_catalog.Count} discovered · {result.DuplicateCount} duplicates removed · {result.IssueCount} entries skipped";
         }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
         catch (Exception exception)
         {
             StatusLabel.Text = $"Discovery failed ({exception.GetType().Name})";
         }
+        finally
+        {
+            if (ReferenceEquals(_catalogLoadCancellation, cancellation))
+                _catalogLoadCancellation = null;
+            cancellation.Dispose();
+        }
     }
 
-    private void Window_Closed(object? sender, EventArgs e) => _iconLoadCancellation?.Cancel();
+    private void Window_Closed(object? sender, EventArgs e)
+    {
+        _catalogLoadCancellation?.Cancel();
+        _iconLoadCancellation?.Cancel();
+        _iconCache.Clear();
+        _entries.Clear();
+        ApplicationsList.ItemsSource = null;
+    }
 
     private void SearchBox_TextChanged(object sender, TextChangedEventArgs e) => ApplyFilter();
 
@@ -76,37 +100,49 @@ public partial class ApplicationPickerWindow : Window
 
     private async Task LoadVisibleIconsAsync(IReadOnlyList<DockApplicationOption> matches)
     {
-        _iconLoadCancellation?.Cancel();
-        _iconLoadCancellation?.Dispose();
-        _iconLoadCancellation = new CancellationTokenSource();
-        var token = _iconLoadCancellation.Token;
-        foreach (var application in matches.Take(MaximumIconsPerRefresh))
+        var cancellation = new CancellationTokenSource();
+        var previous = _iconLoadCancellation;
+        _iconLoadCancellation = cancellation;
+        previous?.Cancel();
+        var token = cancellation.Token;
+        try
         {
-            if (token.IsCancellationRequested || !IsLoaded)
-                return;
-            if (!_iconCache.TryGetValue(application.TargetIdentity, out var icon))
+            foreach (var application in matches.Take(MaximumIconsPerRefresh))
             {
-                try
-                {
-                    var result = await _session.ResolveIconAsync(application.TargetIdentity, token);
-                    icon = result.Status == DockApplicationIconStatus.Found && result.Asset is not null
-                        ? DecodePng(result.Asset.Png)
-                        : null;
-                }
-                catch (OperationCanceledException)
-                {
+                if (token.IsCancellationRequested || !IsLoaded)
                     return;
-                }
-                catch (Exception)
+                if (!_iconCache.TryGetValue(application.TargetIdentity, out var icon))
                 {
-                    icon = null;
+                    try
+                    {
+                        var result = await _session.ResolveIconAsync(application.TargetIdentity, token);
+                        if (token.IsCancellationRequested || !IsLoaded)
+                            return;
+                        icon = result.Status == DockApplicationIconStatus.Found && result.Asset is not null
+                            ? DecodePng(result.Asset.Png)
+                            : null;
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        return;
+                    }
+                    catch (Exception)
+                    {
+                        icon = null;
+                    }
+                    _iconCache[application.TargetIdentity] = icon;
                 }
-                _iconCache[application.TargetIdentity] = icon;
-            }
 
-            var entry = _entries.FirstOrDefault(candidate => candidate.Application.TargetIdentity == application.TargetIdentity);
-            if (entry is not null)
-                entry.Icon = icon;
+                var entry = _entries.FirstOrDefault(candidate => candidate.Application.TargetIdentity == application.TargetIdentity);
+                if (entry is not null)
+                    entry.Icon = icon;
+            }
+        }
+        finally
+        {
+            if (ReferenceEquals(_iconLoadCancellation, cancellation))
+                _iconLoadCancellation = null;
+            cancellation.Dispose();
         }
     }
 
@@ -123,6 +159,16 @@ public partial class ApplicationPickerWindow : Window
         }
 
         var result = _session.PinApplication(entry.Application);
+        _diagnostics?.Record("dock-state-mutation", TimeSpan.Zero, new
+        {
+            Operation = "PinApplication",
+            result.Succeeded,
+            result.Changed,
+            Change = result.Change.ToString(),
+            result.DiagnosticCode,
+            PinnedCount = _session.State.PinnedApplications.Count,
+            PinnedOrderSha256 = ExperimentalDockDiagnostics.GetPinnedOrderSha256(_session.State)
+        });
         if (!result.Succeeded)
         {
             StatusLabel.Text = $"Could not pin application ({result.DiagnosticCode ?? result.Change.ToString()})";

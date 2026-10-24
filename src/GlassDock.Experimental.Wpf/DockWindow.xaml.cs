@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Automation;
@@ -20,47 +21,104 @@ public partial class DockWindow : Window
     private const double IconSize = 48;
     private readonly DockApplicationSession _session;
     private readonly string _loadDiagnostic;
+    private readonly ExperimentalDockDiagnostics? _diagnostics;
+    private readonly Stopwatch _startupTimer;
     private readonly Dictionary<DockTargetIdentity, ImageSource?> _iconCache = [];
+    private CancellationTokenSource? _catalogLoadCancellation;
     private CancellationTokenSource? _iconLoadCancellation;
     private bool _vertical;
 
-    public DockWindow(DockApplicationSession session, string loadDiagnostic)
+    public DockWindow(
+        DockApplicationSession session,
+        string loadDiagnostic,
+        ExperimentalDockDiagnostics? diagnostics,
+        Stopwatch startupTimer)
     {
         InitializeComponent();
         _session = session ?? throw new ArgumentNullException(nameof(session));
         _loadDiagnostic = loadDiagnostic;
+        _diagnostics = diagnostics;
+        _startupTimer = startupTimer ?? throw new ArgumentNullException(nameof(startupTimer));
+        ExecutionModeLabel.Text = session.ExecutionMode == DockExecutionMode.PreviewOnly
+            ? "PREVIEW ONLY · APP COMMANDS BLOCKED"
+            : "SHELL COMMANDS ENABLED · EXPERIMENTAL";
+        ExecutionModeLabel.Foreground = session.ExecutionMode == DockExecutionMode.PreviewOnly
+            ? new SolidColorBrush(Color.FromRgb(159, 229, 192))
+            : new SolidColorBrush(Color.FromRgb(255, 190, 132));
+        ExecutionModeLabel.ToolTip = session.ExecutionMode == DockExecutionMode.PreviewOnly
+            ? "Launch, Activate, and Open are blocked by the application session."
+            : "Shell commands can affect other applications. This mode requires the explicit --enable-shell-commands argument.";
+        CommandBindings.Add(new CommandBinding(ApplicationCommands.Close, (_, _) => Close()));
+        InputBindings.Add(new KeyBinding(ApplicationCommands.Close, new KeyGesture(Key.F4, ModifierKeys.Alt)));
         ApplyEdgeLayout();
         RenderState();
     }
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
+        var cancellation = new CancellationTokenSource();
+        _catalogLoadCancellation = cancellation;
+        var catalogTimer = Stopwatch.StartNew();
         StatusText("Loading Windows application catalog…");
         try
         {
-            var result = await _session.RefreshCatalogAsync();
+            var result = await _session.RefreshCatalogAsync(cancellation.Token);
+            if (cancellation.IsCancellationRequested || !IsLoaded)
+                return;
             if (result.Status == DockApplicationCatalogStatus.Succeeded)
                 StatusText($"{result.Applications.Count} applications discovered · none were pinned automatically");
             else
                 StatusText($"Application discovery unavailable ({result.DiagnosticCode})");
+            _diagnostics?.Record("catalog-load-completed", catalogTimer.Elapsed, new
+            {
+                Status = result.Status.ToString(),
+                Count = result.Applications.Count,
+                result.DuplicateCount,
+                result.IssueCount,
+                result.DiagnosticCode
+            });
+        }
+        catch (OperationCanceledException)
+        {
+            return;
         }
         catch (Exception exception)
         {
             StatusText($"Application discovery failed ({exception.GetType().Name})");
+            _diagnostics?.Record("catalog-load-failed", catalogTimer.Elapsed, new { Error = exception.GetType().Name });
+        }
+        finally
+        {
+            if (ReferenceEquals(_catalogLoadCancellation, cancellation))
+                _catalogLoadCancellation = null;
+            cancellation.Dispose();
         }
 
+        if (!IsLoaded)
+            return;
         await LoadStateIconsAsync();
+        if (!IsLoaded)
+            return;
         RenderState();
+        _diagnostics?.Record("window-loaded", _startupTimer.Elapsed);
         if (!string.IsNullOrWhiteSpace(_loadDiagnostic)
             && !string.Equals(_loadDiagnostic, "DefaultedMissing", StringComparison.Ordinal))
             StatusText($"Configuration load: {_loadDiagnostic}");
     }
 
-    private void Window_Closed(object? sender, EventArgs e) => _iconLoadCancellation?.Cancel();
+    private void Window_Closed(object? sender, EventArgs e)
+    {
+        _catalogLoadCancellation?.Cancel();
+        _iconLoadCancellation?.Cancel();
+        _iconCache.Clear();
+        SectionsHost.Children.Clear();
+    }
+
+    private void ExitButton_Click(object sender, RoutedEventArgs e) => Close();
 
     private void AddAppsButton_Click(object sender, RoutedEventArgs e)
     {
-        var picker = new ApplicationPickerWindow(_session) { Owner = this };
+        var picker = new ApplicationPickerWindow(_session, _diagnostics) { Owner = this };
         _ = picker.ShowDialog();
         RenderState();
         _ = LoadStateIconsAsync();
@@ -268,7 +326,15 @@ public partial class DockWindow : Window
         };
         AutomationProperties.SetName(button, $"{item.DisplayName}, {section}");
         AutomationProperties.SetHelpText(button, "Enter or Space launches or opens. Delete removes this Dock reference. Use Ctrl+Arrow to reorder.");
-        button.Click += async (_, _) => await ExecuteItemAsync(item);
+        button.Click += async (_, _) =>
+        {
+            if (button.Tag is DockTileDragData { DragStarted: true } drag)
+            {
+                button.Tag = drag with { DragStarted = false };
+                return;
+            }
+            await ExecuteItemAsync(item);
+        };
         button.KeyDown += (_, args) => HandleTileKeyDown(item, section, sectionItems, args);
         button.MouseRightButtonUp += (_, args) =>
         {
@@ -290,35 +356,51 @@ public partial class DockWindow : Window
 
     private async Task LoadStateIconsAsync()
     {
-        _iconLoadCancellation?.Cancel();
-        _iconLoadCancellation?.Dispose();
-        _iconLoadCancellation = new CancellationTokenSource();
-        var token = _iconLoadCancellation.Token;
+        var cancellation = new CancellationTokenSource();
+        var previous = _iconLoadCancellation;
+        _iconLoadCancellation = cancellation;
+        previous?.Cancel();
+        var token = cancellation.Token;
         var items = _session.State.PinnedApplications
             .Concat(_session.State.VisibleRecentApplications)
             .Concat(_session.State.FilesAndFolders)
             .Where(item => !_iconCache.ContainsKey(item.TargetIdentity))
             .ToArray();
 
-        foreach (var item in items)
+        var timer = Stopwatch.StartNew();
+        var processed = 0;
+        try
         {
-            if (token.IsCancellationRequested || !IsLoaded)
-                return;
-            try
+            foreach (var item in items)
             {
-                var result = await _session.ResolveIconAsync(item.TargetIdentity, token);
-                _iconCache[item.TargetIdentity] = result.Status == DockApplicationIconStatus.Found && result.Asset is not null
-                    ? DecodePng(result.Asset.Png)
-                    : null;
+                if (token.IsCancellationRequested || !IsLoaded)
+                    return;
+                try
+                {
+                    var result = await _session.ResolveIconAsync(item.TargetIdentity, token);
+                    if (token.IsCancellationRequested || !IsLoaded)
+                        return;
+                    _iconCache[item.TargetIdentity] = result.Status == DockApplicationIconStatus.Found && result.Asset is not null
+                        ? DecodePng(result.Asset.Png)
+                        : null;
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+                catch (Exception)
+                {
+                    _iconCache[item.TargetIdentity] = null;
+                }
+                processed++;
             }
-            catch (OperationCanceledException)
-            {
-                return;
-            }
-            catch (Exception)
-            {
-                _iconCache[item.TargetIdentity] = null;
-            }
+        }
+        finally
+        {
+            if (ReferenceEquals(_iconLoadCancellation, cancellation))
+                _iconLoadCancellation = null;
+            cancellation.Dispose();
+            _diagnostics?.Record("state-icon-load-completed", timer.Elapsed, new { Requested = items.Length, Processed = processed });
         }
     }
 
@@ -327,6 +409,12 @@ public partial class DockWindow : Window
         var result = item.Kind is DockProjectItemKind.File or DockProjectItemKind.Folder
             ? await _session.ExecuteAsync(item.Id, DockCommandKind.Open)
             : await _session.InvokeApplicationAsync(item.Id);
+        if (result.Outcome == DockCommandOutcome.BlockedByPolicy)
+        {
+            StatusText("Preview only: Launch, Activate, and Open are disabled at the Shell command boundary.");
+            return;
+        }
+
         StatusText(result.Outcome == DockCommandOutcome.Completed
             ? $"{item.DisplayName}: command submitted"
             : $"{item.DisplayName}: {result.Outcome} ({result.DiagnosticCode ?? "no-detail"})");
@@ -365,18 +453,21 @@ public partial class DockWindow : Window
     private void Tile_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (sender is Button button)
-            button.Tag = ((DockTileDragData)button.Tag) with { DragStart = e.GetPosition(this) };
+            button.Tag = ((DockTileDragData)button.Tag) with { DragStart = e.GetPosition(this), DragStarted = false };
     }
 
     private void Tile_PreviewMouseMove(object sender, MouseEventArgs e)
     {
-        if (e.LeftButton != MouseButtonState.Pressed || sender is not Button button || button.Tag is not DockTileDragData drag)
+        if (e.LeftButton != MouseButtonState.Pressed || sender is not Button button
+            || button.Tag is not DockTileDragData drag || drag.DragStarted)
             return;
         var current = e.GetPosition(this);
         if (Math.Abs(current.X - drag.DragStart.X) < SystemParameters.MinimumHorizontalDragDistance
             && Math.Abs(current.Y - drag.DragStart.Y) < SystemParameters.MinimumVerticalDragDistance)
             return;
-        _ = DragDrop.DoDragDrop(button, drag, DragDropEffects.Move);
+        var startedDrag = drag with { DragStarted = true };
+        button.Tag = startedDrag;
+        _ = DragDrop.DoDragDrop(button, startedDrag, DragDropEffects.Move);
     }
 
     private static void Tile_DragOver(object sender, DragEventArgs e) =>
@@ -409,6 +500,15 @@ public partial class DockWindow : Window
 
     private void ApplyMutation(DockSessionMutationResult result, string successMessage)
     {
+        _diagnostics?.Record("dock-state-mutation", TimeSpan.Zero, new
+        {
+            result.Succeeded,
+            result.Changed,
+            Change = result.Change.ToString(),
+            result.DiagnosticCode,
+            PinnedCount = _session.State.PinnedApplications.Count,
+            PinnedOrderSha256 = ExperimentalDockDiagnostics.GetPinnedOrderSha256(_session.State)
+        });
         if (!result.Succeeded)
         {
             StatusText($"Change not saved ({result.DiagnosticCode ?? result.Change.ToString()})");
@@ -463,5 +563,9 @@ public partial class DockWindow : Window
     private void StatusText(string message) =>
         StatusLabel.Text = message;
 
-    private sealed record DockTileDragData(DockItemId ItemId, DockSection Section, Point DragStart = default);
+    private sealed record DockTileDragData(
+        DockItemId ItemId,
+        DockSection Section,
+        Point DragStart = default,
+        bool DragStarted = false);
 }
