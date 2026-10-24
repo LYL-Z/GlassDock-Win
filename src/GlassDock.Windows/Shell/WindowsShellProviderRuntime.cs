@@ -13,9 +13,14 @@ public sealed class WindowsShellProvider : IWindowsShellProvider, IDockApplicati
     private Dictionary<DockTargetIdentity, string> _iconSources = [];
 
     public WindowsShellProvider()
+        : this((Action<WindowsShellIconDiagnostic>?)null)
+    {
+    }
+
+    public WindowsShellProvider(Action<WindowsShellIconDiagnostic>? iconDiagnostics)
         : this(
             new WindowsStartMenuApplicationDiscovery(),
-            new WindowsShellIconExtractor(),
+            new WindowsShellIconExtractor(iconDiagnostics),
             new WindowsShellCommandExecutor())
     {
     }

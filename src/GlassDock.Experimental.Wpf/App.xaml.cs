@@ -33,19 +33,45 @@ public partial class App : Application
                 PinnedOrderSha256 = ExperimentalDockDiagnostics.GetPinnedOrderSha256(loaded.State)
             });
 
-            var shellProvider = new WindowsShellProvider();
+            var initialState = loaded.State;
+            if (options.IncludeNativeRolePreview)
+            {
+                var seed = DockNativeRolePreviewSeed.Apply(initialState);
+                if (seed.Changed)
+                {
+                    var save = store.Save(seed.State);
+                    if (!save.Succeeded)
+                        throw new IOException($"The isolated native-role preview profile could not be saved ({save.DiagnosticCode ?? save.Status.ToString()}).");
+                }
+                initialState = seed.State;
+                diagnostics?.Record("native-role-preview-seeded", startupTimer.Elapsed, new
+                {
+                    ProcessId = Environment.ProcessId,
+                    seed.Changed,
+                    PinnedCount = initialState.PinnedApplications.Count,
+                    RecentCount = initialState.RecentApplications.Count,
+                    FileCount = initialState.FilesAndFolders.Count
+                });
+            }
+
+            var shellProvider = new WindowsShellProvider(iconDiagnostic =>
+                diagnostics?.Record(
+                    $"shell-icon-{iconDiagnostic.Stage}-{iconDiagnostic.Event}",
+                    TimeSpan.FromMilliseconds(iconDiagnostic.ElapsedMilliseconds),
+                    new { iconDiagnostic.HResult }));
             var iconManifestTimer = Stopwatch.StartNew();
             var iconManifestStore = new DockIconManifestFileStore(options.ProfileDirectory);
             var iconManifest = iconManifestStore.Load();
             diagnostics?.Record("icon-manifest-loaded", iconManifestTimer.Elapsed, new
             {
+                ProcessId = Environment.ProcessId,
                 Status = iconManifest.Status.ToString(),
                 iconManifest.DiagnosticCode,
                 RoleAssignmentCount = iconManifest.Manifest.RoleAssignments.Count,
                 MappingCount = iconManifest.Manifest.Mappings.Count
             });
             var session = new DockApplicationSession(
-                loaded.State,
+                initialState,
                 store,
                 shellProvider,
                 options.ExecutionMode);
@@ -53,7 +79,22 @@ public partial class App : Application
                 iconManifest.Manifest,
                 iconManifestStore,
                 shellProvider,
-                new WindowsDockIconVisualStateProvider());
+                new WindowsDockIconVisualStateProvider(diagnostics: queryDiagnostic =>
+                    diagnostics?.Record(
+                        queryDiagnostic.Event,
+                        TimeSpan.FromMilliseconds(queryDiagnostic.WaitElapsedMilliseconds),
+                        new
+                        {
+                            queryDiagnostic.ApiElapsedMilliseconds,
+                            queryDiagnostic.NativeCallStillRunning,
+                            queryDiagnostic.Result,
+                            queryDiagnostic.HResult
+                        })),
+                resolutionDiagnostic =>
+                    diagnostics?.Record(
+                        $"dock-icon-{resolutionDiagnostic.Stage}-{resolutionDiagnostic.Event}",
+                        TimeSpan.FromMilliseconds(resolutionDiagnostic.ElapsedMilliseconds),
+                        new { resolutionDiagnostic.Outcome, resolutionDiagnostic.DiagnosticCode }));
             var window = new DockWindow(session, loaded.DiagnosticCode ?? loaded.Status.ToString(), diagnostics, startupTimer, iconResolver);
             MainWindow = window;
             diagnostics?.Record("window-show-called", startupTimer.Elapsed);
@@ -74,6 +115,7 @@ public partial class App : Application
     {
         var previewOnly = false;
         var allowShellCommands = false;
+        var includeNativeRolePreview = false;
         string? profileDirectory = null;
         string? diagnosticsPath = null;
 
@@ -83,6 +125,9 @@ public partial class App : Application
             {
                 case "--preview-only":
                     previewOnly = true;
+                    break;
+                case "--preview-native-role-icons":
+                    includeNativeRolePreview = true;
                     break;
                 case "--enable-shell-commands":
                     allowShellCommands = true;
@@ -108,11 +153,35 @@ public partial class App : Application
         var resolvedDiagnostics = diagnosticsPath is null
             ? null
             : ResolveLocalPath(diagnosticsPath, Path.Combine(localRoot, "evidence", "experimental-preview"), "diagnostics path");
+        if (includeNativeRolePreview
+            && (!previewOnly || allowShellCommands || profileDirectory is null || diagnosticsPath is null
+                || !IsIsolatedPreviewProfile(resolvedProfile, resolvedDiagnostics!, localRoot)))
+            throw new ArgumentException("--preview-native-role-icons requires explicit PreviewOnly mode, an isolated run-owned evidence profile, and diagnostics under that same run.");
 
         return new StartupOptions(
             allowShellCommands ? DockExecutionMode.AllowShellCommands : DockExecutionMode.PreviewOnly,
             resolvedProfile,
-            resolvedDiagnostics);
+            resolvedDiagnostics,
+            includeNativeRolePreview);
+    }
+
+    private static bool IsIsolatedPreviewProfile(string profilePath, string diagnosticsPath, string localRoot)
+    {
+        var evidenceRoot = Path.GetFullPath(Path.Combine(localRoot, "evidence", "experimental-preview"));
+        var profile = Path.GetFullPath(profilePath);
+        var diagnostics = Path.GetFullPath(diagnosticsPath);
+        var rootPrefix = evidenceRoot.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (!profile.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var profileDirectory = new DirectoryInfo(profile);
+        if (!string.Equals(profileDirectory.Name, "profile", StringComparison.OrdinalIgnoreCase)
+            || profileDirectory.Parent is null
+            || !Guid.TryParseExact(profileDirectory.Parent.Name, "N", out _))
+            return false;
+
+        var runRoot = profileDirectory.Parent.FullName.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        return diagnostics.StartsWith(runRoot, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string ReadValue(string[] args, ref int index, string option)
@@ -153,5 +222,6 @@ public partial class App : Application
     private sealed record StartupOptions(
         DockExecutionMode ExecutionMode,
         string ProfileDirectory,
-        string? DiagnosticsPath);
+        string? DiagnosticsPath,
+        bool IncludeNativeRolePreview);
 }

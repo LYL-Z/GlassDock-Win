@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.IO.Compression;
 using System.Runtime.InteropServices;
 using GlassDock.Core;
@@ -12,12 +13,22 @@ public interface IWindowsShellIconExtractor
         CancellationToken cancellationToken = default);
 }
 
+public sealed record WindowsShellIconDiagnostic(
+    string Stage,
+    string Event,
+    double ElapsedMilliseconds,
+    int? HResult = null);
+
 /// <summary>Extracts real Shell icons as bounded, alpha-preserving PNG assets.</summary>
 public sealed class WindowsShellIconExtractor : IWindowsShellIconExtractor
 {
     private const int RequestedPixels = 256;
     private const int MaximumPixels = 512;
     private static readonly Guid ShellItemImageFactoryId = new("BCC18B79-BA16-442F-80C4-8A59C30C463B");
+    private readonly Action<WindowsShellIconDiagnostic>? _diagnostics;
+
+    public WindowsShellIconExtractor(Action<WindowsShellIconDiagnostic>? diagnostics = null) =>
+        _diagnostics = diagnostics;
 
     public ValueTask<WindowsShellIconResult> ResolveIconAsync(
         string shellParsingName,
@@ -31,8 +42,9 @@ public sealed class WindowsShellIconExtractor : IWindowsShellIconExtractor
             () => Extract(shellParsingName, cancellationToken), cancellationToken));
     }
 
-    private static WindowsShellIconResult Extract(string parsingName, CancellationToken cancellationToken)
+    private WindowsShellIconResult Extract(string parsingName, CancellationToken cancellationToken)
     {
+        var totalTimer = Stopwatch.StartNew();
         cancellationToken.ThrowIfCancellationRequested();
         var coResult = NativeMethods.CoInitializeEx(IntPtr.Zero, NativeMethods.CoinitMultithreaded);
         var initialized = coResult >= 0;
@@ -45,13 +57,19 @@ public sealed class WindowsShellIconExtractor : IWindowsShellIconExtractor
         try
         {
             var iid = ShellItemImageFactoryId;
+            var stageTimer = Stopwatch.StartNew();
+            Report("SHCreateItemFromParsingName", "started", 0);
             var createResult = NativeMethods.SHCreateItemFromParsingName(parsingName, IntPtr.Zero, ref iid, out factory);
+            Report("SHCreateItemFromParsingName", "completed", stageTimer.Elapsed.TotalMilliseconds, createResult);
             if (createResult < 0)
                 return Failure(createResult, stage);
 
             var size = new NativeSize(RequestedPixels, RequestedPixels);
             stage = "get-shell-icon";
+            stageTimer.Restart();
+            Report("IShellItemImageFactory.GetImage", "started", 0);
             var imageResult = factory.GetImage(size, NativeMethods.SiigbfIconOnly | NativeMethods.SiigbfBiggersSizeOk, out bitmap);
+            Report("IShellItemImageFactory.GetImage", "completed", stageTimer.Elapsed.TotalMilliseconds, imageResult);
             if (imageResult < 0 || bitmap == IntPtr.Zero)
                 return Failure(imageResult, stage);
 
@@ -77,7 +95,11 @@ public sealed class WindowsShellIconExtractor : IWindowsShellIconExtractor
             int copiedLines;
             try
             {
+                stage = "get-dibits";
+                stageTimer.Restart();
+                Report("GetDIBits", "started", 0);
                 copiedLines = NativeMethods.GetDIBits(dc, bitmap, 0, (uint)height, pixels, ref info, NativeMethods.DibRgbColors);
+                Report("GetDIBits", "completed", stageTimer.Elapsed.TotalMilliseconds);
             }
             finally
             {
@@ -112,12 +134,25 @@ public sealed class WindowsShellIconExtractor : IWindowsShellIconExtractor
         }
         finally
         {
+            Report("shell-icon-extract", "finished", totalTimer.Elapsed.TotalMilliseconds);
             if (bitmap != IntPtr.Zero)
                 NativeMethods.DeleteObject(bitmap);
             if (factory is not null && Marshal.IsComObject(factory))
                 Marshal.ReleaseComObject(factory);
             if (initialized)
                 NativeMethods.CoUninitialize();
+        }
+    }
+
+    private void Report(string stage, string eventName, double elapsedMilliseconds, int? hresult = null)
+    {
+        try
+        {
+            _diagnostics?.Invoke(new WindowsShellIconDiagnostic(stage, eventName, elapsedMilliseconds, hresult));
+        }
+        catch
+        {
+            // Optional diagnostics must not alter Shell icon resolution.
         }
     }
 

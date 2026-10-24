@@ -1,6 +1,6 @@
 # GlassDock-Win 产品行为规格草案（M1 研究线）
 
-状态：**M1 PROVISIONAL，尚未 Mac 实机采样或最终冻结。** 本文把官方公开行为转成 Windows 产品规格。2026-10-23 负责人已批准 D-01～D-09 产品政策；这些决定仅适用于 GlassDock-Win，不是 Apple 官方默认或已实现功能。
+状态：**M1 PROVISIONAL，尚未 Mac 实机采样或最终冻结。** 本文把官方公开行为转成 Windows 产品规格。2026-10-23 负责人已批准 D-01～D-10 产品政策；这些决定仅适用于 GlassDock-Win，不是 Apple 官方默认或已实现功能。D-10 要求外观和 Windows 目标分离，个人本地图像只用于受限预览。
 
 ## Dock 的区域与对象
 

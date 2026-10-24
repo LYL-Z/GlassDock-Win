@@ -32,6 +32,7 @@ public sealed class ExperimentalDockDiagnostics
             var entry = JsonSerializer.Serialize(new
             {
                 TimestampUtc = DateTimeOffset.UtcNow,
+                ProcessId = Environment.ProcessId,
                 Event = eventName,
                 ElapsedMilliseconds = Math.Round(elapsed.TotalMilliseconds, 3),
                 Detail = detail

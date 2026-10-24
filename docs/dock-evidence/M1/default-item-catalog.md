@@ -14,30 +14,30 @@ Apple 用户指南当前说明 Dock 可以显示最多三个尚未固定的近�
 2. **建议/近期 App 区：** 可选、与固定项去重；官方用户指南记录最多三个未固定近期 App。Windows 的数据来源、保留策略与首次运行开关仍需产品决定。
 3. **文件与文件夹区：** 用户文件/文件夹、Downloads、Trash/Bin 等；Apple 文档描述文件/文件夹位于另一条分隔线的文件侧。各方向中的准确视觉方向、分隔线形状及位置须由 REF-01/02 实机样本确认。
 
-对于窗口的原生 Dock 图标，Windows 映射采用“系统提供的当前 App 图标 + 可访问状态装饰”方案；macOS 图标、Finder/Safari 品牌和 Apple 系统截图不作为 Windows 产品资源。Apple AppKit 文档列出空/满 Trash 图像资源名，但这只证明 API 有这些标准图像标识，不替代 Mac Dock 实机观察其具体切换时机或外观。
+Windows 目标身份与可见名称/图标分开。Windows 原生外观可以使用 Shell 图标；用户选择 macOS 外观时，可在本机加载自己提供的 macOS 图标。该策略来自负责人 D-10，不是 Apple 官方对 Windows 的建议。Apple 图像在没有再分发授权时只能作为本机素材；公开构建不打包私人图标。AppKit 文档列出空/满 Trash 图像资源名，但这只证明 API 有这些标准图像标识，不替代 Mac Dock 实机观察其具体切换时机或外观。
 
 ### Windows 首次运行组成与待定边界
 
 | 首次运行元素 | 当前状态与处理 | 用户影响与待定事项 |
 |---|---|---|
-| Windows 文件管理入口 | **负责人已决定默认包含 Explorer**，作为 Finder 功能映射；使用 Windows 系统图标与受支持入口 | 不显示 Finder 名称或复制 Finder 图像；真实打开由未来 Shell provider 实现 |
+| Windows 文件管理入口 | **负责人已决定默认功能目标为 Explorer**；底层身份保持 Windows 文件管理角色，可见名称/图标随外观配置独立选择 | 本机 macOS 图标预览可显示 Finder 名称与用户提供的 Finder 图像；正常安装版是否采用该外观仍未冻结。真实打开受 PreviewOnly 阻止，Shell 命令须单独验收 |
 | 用户固定 App | 不预选第三方 App；该项属于本规格的首启建议，负责人尚未另行指定软件清单 | 不随包带入无关品牌图标；用户主动固定后读取可追溯的系统图标 |
 | 近期 App | **负责人已决定默认开启、最多三项**；没有可靠本地活动来源时保持空，不伪造条目 | 仅保存必要本地状态，不上传使用记录；支持关闭和清除。Windows 近期活动 provider 尚未实现 |
 | Dock 位置 | **负责人已决定默认 Bottom**；冲突处理由 Dock 自身兼容策略和用户设置解决 | 不自动移动或修改任务栏；可以向用户提供位置调整或手动启用任务栏自动隐藏的说明 |
-| Downloads | Windows Known Folder 映射候选；负责人尚未决定是否作为首启固定项 | 使用真实重定向路径，不猜路径、不复制文件；首次包含策略在相应实现任务前确认 |
-| Trash/Bin | Windows Recycle Bin 映射候选；负责人尚未决定是否作为首启固定项 | 清空必须有明确确认；不可回收时拒绝而不永久删除 |
+| Downloads | 映射真实 Windows Downloads Known Folder；是否成为正常安装版首启固定项仍待决定 | 隔离预览中显示用户提供的 Downloads 图像；定位由 Known Folder API 决定，不猜路径、不复制文件 |
+| Trash/Bin | 映射 Windows Recycle Bin；是否成为正常安装版首启固定项仍待决定 | 隔离预览可显示用户提供的空 Trash 图像；实际状态来自回收站查询。满/未知状态不显示空图；清空须明确确认 |
 | 文件夹与其他文件 | 由用户主动添加；首次运行不扫描私人目录 | 只保存用户创建的 Dock 引用；不复制或修改目标文件 |
 | Handoff 与 Apple 专属角色 | 默认不显示 | 只有存在真实、获授权且跨平台支持的服务时另行评估 |
 
-当前已批准的首启要点只有：Explorer 在固定 App 区、近期区开关启用但无历史时为空、Dock 位于底部。Downloads 与 Recycle Bin 是否默认出现、其相对顺序，以及尺寸/间隔仍未决定或未测量；不得据本目录虚构完整首屏清单。
+当前已批准的首启要点只有：Explorer 是默认文件管理功能目标、近期区开关启用但无历史时为空、Dock 位于底部。正常安装版显示名称/图标方案、Downloads 与 Recycle Bin 是否默认固定、相对顺序以及尺寸/间隔仍未决定或未测量；不得据本目录虚构完整首屏清单。隔离测试可临时呈现四个语义角色，但不改变公开默认项目。
 
 | 语义角色 | Apple 公开资料支持的内容 | GlassDock 首次运行候选 | 功能与边界 | 关联需求 |
 |---|---|---|---|---|
-| Finder / 文件管理入口 | Apple 用户指南以 Finder 作为 Dock 中可打开的 app 示例；这不证明 macOS 的普遍默认固定顺序 | **负责人决定 Windows 首次运行默认包含 Explorer**，作为功能映射，图标取本机 Shell，不复制 Finder 图像或名称 | 单击打开文件管理器；真实启动待 Windows Shell provider；不宣称与 Finder 完全等价 | DOCK-012、019、021；D-01 |
+| Finder / 文件管理入口 | Apple 用户指南以 Finder 作为 Dock 中可打开的 app 示例；这不证明 macOS 的普遍默认固定顺序 | **Explorer 为 Windows 功能目标**；可见名称与图标由 macOS/Windows 外观配置决定。D-10 允许仅本机预览使用用户提供的 Finder 图像 | 身份为 `windows.file-manager`；预览模式下启动命令在 Shell 边界阻止。不得将私人图像纳入公开构建 | DOCK-012、019、021；D-01、D-10 |
 | 用户固定 App | Dock 支持添加、移除、重排项目；未固定的近期 App 可分区显示 | 不预装任意第三方图标；由用户固定快捷方式或已安装应用 | 移除只移除 Dock 引用，不卸载目标；身份与多窗口行为依后续 Shell 设计 | DOCK-005–008、012–016 |
 | 近期/建议 App | Apple 公开指南说可显示最多三个、且尚未固定的近期 App；设置页提供开关。精确默认开关值不由资料集确认 | **负责人决定 Windows 默认开启**；只在有真实、可靠的本地活动记录时显示，最多三项，不上传；没有来源时保持空 | 已固定 App 不重复；允许关闭和清除；不伪造 Apple 排序算法 | DOCK-009、036；D-02 |
-| Downloads | Apple 文档将 Downloads 作为 Dock 默认文件夹入口，并支持 Folder/Stack 表现 | 首次运行显示 Windows Known Folder API 返回的 Downloads 角色项；用户重定向位置必须随系统路径 | 点击可打开或展开；文件只引用原位置，不复制；断链/空文件夹有空态 | DOCK-023–026 |
-| Trash / Bin | Apple 指南将 Trash/Bin 作为 Dock 项；AppKit 提供 empty/full 图像名称（A13），但具体 Dock 图标状态切换未在本机观察 | 映射 Windows Recycle Bin Shell object；使用本机系统图标 | 单击打开；状态反映回收站内容；“清空”单独确认；移动文件优先走可恢复回收语义，拒绝静默永久删除 | DOCK-027–029 |
+| Downloads | Apple 文档将 Downloads 作为 Dock 文件夹入口，并支持 Folder/Stack 表现 | 隔离预览映射 Windows Downloads Known Folder 并使用用户提供图标；正常安装版是否首启固定仍未决定 | 目标身份来自 Known Folder ID；打开/Stack 尚未实现，预览命令禁用 | DOCK-023–026；D-10 |
+| Trash / Bin | Apple 指南将 Trash/Bin 作为 Dock 项；AppKit 提供 empty/full 图像名称（A13），但具体 Dock 图标状态切换未在本机观察 | 隔离预览映射 Windows Recycle Bin；仅空状态有用户提供图像；满/未知状态回退，不伪装为空 | 状态查询只读；打开/清空及确认流程尚未在实验 UI 实现；不能永久删除作为回收失败的后备 | DOCK-027–029；D-06、D-10 |
 | 文件夹与用户 Stack | Apple 允许用户添加文件夹，文件夹或 Stack 可用 Fan/Grid/List 展开并排序 | 首次运行不自动加用户私人目录；由用户选文件夹后保存引用 | 列表内容受路径权限/云占位状态约束；不得为了展示而递归扫描未选择目录 | DOCK-022、024–026 |
 | 最近窗口/最小化代理 | Apple 文档与原始矩阵包含多窗口、最小化窗口代理和最近项菜单 | 不作为必备首次运行图标；后续由用户偏好控制 | 每个代理需稳定对应 HWND/App identity；关闭代理不能关闭应用或删文件，除非该命令明确确认 | DOCK-014、030–031、045 |
 | Handoff 等临时跨设备项 | Apple 文档记载兼容 Handoff 的活动可出现在 Dock；它依赖 Apple 设备/账户生态 | Windows 首次运行不显示；后续只在有用户授权且具备真实跨设备来源时设计 | 不伪造最近文件/手机状态；无来源时隐藏，不以占位图冒充可用功能 | DOCK-039 |
@@ -50,9 +50,9 @@ Apple 用户指南当前说明 Dock 可以显示最多三个尚未固定的近�
 
 ## 图标来源和显示状态
 
-- 已安装 Windows App 优先使用系统返回的当前 App 图标；快捷方式文件使用 Shell 提供的图标。不得从 Apple 系统文件中提取 macOS 图标。
-- Finder、Safari、Launchpad 等名称和图像不作为 Windows 实装资源；需要说明功能映射时用文字说明“类比”并区分品牌。
+- Windows 原生外观可用 Shell 图标；macOS 外观可使用用户自行提供且授权范围合适的资源。目标身份与显示名称/图标解耦，切换图标不得改动启动目标。
+- 本机只读预览的四张用户参考图存放于 Git 忽略的 D: `.local`；不进入源码、公开构建或 Release。Finder 图像只代表显示外观，目标仍为 Windows Explorer。
 - 最近/运行/徽标/弹跳是叠加状态，不创建第二份基础图标；优先级、遮挡和无障碍名称需后续规格评审。
-- 当前资源包：无。新增任何第三方或 Apple 图像前，先登记权利人、来源、许可范围、署名义务和再分发许可。
+- 公开资源包仍无 Apple 图标。当前只有用户提供的本机预览 PNG，记录为 `LocalUseOnly`，再分发授权未确认；Trash 满状态图像未提供。
 
 本目录由 [Apple 官方参考笔记](official-reference-notes-2026-10-23.md)、[46 项规格矩阵](spec-matrix.csv)、[参考基线](reference-baseline.md) 和 [素材权利台账](rights-and-reference-ledger.md) 支持；Apple 语义是网页研究，Windows 首次运行配置是待评审的产品提案，Mac 视觉观察仍全部 `NOT TESTED`。
