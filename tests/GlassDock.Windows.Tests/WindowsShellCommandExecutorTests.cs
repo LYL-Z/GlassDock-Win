@@ -51,6 +51,22 @@ public sealed class WindowsShellCommandExecutorTests
     }
 
     [TestMethod]
+    public async Task DefaultExplorerSystemRoleLaunchesTheKnownWindowsExecutable()
+    {
+        var backend = new RecordingBackend();
+        var executor = new WindowsShellCommandExecutor(backend);
+        var explorer = DockState.CreateDefault().PinnedApplications.Single();
+
+        var result = await executor.ExecuteAsync(DockCommand.For(DockCommandKind.Launch, explorer));
+
+        Assert.AreEqual(DockCommandOutcome.Completed, result.Outcome);
+        Assert.AreEqual(
+            $"exe:{Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe")}",
+            backend.LastOperation);
+        Assert.AreEqual(0, backend.FindWindowCalls);
+    }
+
+    [TestMethod]
     public async Task ActivateReturnsForegroundDenialWithoutRetryingOrForcingFocus()
     {
         var backend = new RecordingBackend
@@ -161,6 +177,12 @@ public sealed class WindowsShellCommandExecutorTests
         public DockCommandResult LaunchShellLink(string shellLinkPath)
         {
             LastOperation = $"link:{shellLinkPath}";
+            return new DockCommandResult(DockCommandOutcome.Completed);
+        }
+
+        public DockCommandResult LaunchExecutable(string executablePath)
+        {
+            LastOperation = $"exe:{executablePath}";
             return new DockCommandResult(DockCommandOutcome.Completed);
         }
 

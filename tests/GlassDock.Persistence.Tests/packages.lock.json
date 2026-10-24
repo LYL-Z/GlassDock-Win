@@ -92,12 +92,19 @@
         "resolved": "4.5.1",
         "contentHash": "oa0w2QC/T3U+ulUn38AmbWE/wnEMtqSFRb2z277z5SpswqNc/ySWcAVlG1qEWUxzm+NztCjkoeLAn/83gIx3ug=="
       },
+      "glassdock.app": {
+        "type": "Project",
+        "dependencies": {
+          "GlassDock.Core": "[1.0.0, )"
+        }
+      },
       "glassdock.core": {
         "type": "Project"
       },
       "glassdock.persistence": {
         "type": "Project",
         "dependencies": {
+          "GlassDock.App": "[1.0.0, )",
           "GlassDock.Core": "[1.0.0, )"
         }
       }

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Security;
 using System.Text;
+using GlassDock.App;
 using GlassDock.Core;
 
 namespace GlassDock.Persistence;
@@ -49,7 +50,7 @@ public sealed record DockConfigurationStoreSaveResult(
 /// File-system adapter for the Core JSON codec. The caller must explicitly choose an application-owned
 /// directory; this type never discovers or changes a per-user settings path on its own.
 /// </summary>
-public sealed class DockConfigurationFileStore
+public sealed class DockConfigurationFileStore : IDockStateStore
 {
     internal const string ConfigurationFileName = "dock-config.json";
     internal const string Backup1FileName = "dock-config.json.bak.1";
@@ -140,6 +141,14 @@ public sealed class DockConfigurationFileStore
     {
         lock (_directoryLock)
             return SaveCore(state);
+    }
+
+    DockState IDockStateStore.LoadState() => Load().State;
+
+    DockStateStoreSaveResult IDockStateStore.SaveState(DockState state)
+    {
+        var result = Save(state);
+        return new DockStateStoreSaveResult(result.Succeeded, result.DiagnosticCode);
     }
 
     private DockConfigurationStoreSaveResult SaveCore(DockState state)

@@ -88,6 +88,9 @@ public sealed class WindowsShellProviderIntegrationTests
         public DockCommandResult LaunchShellLink(string shellLinkPath) =>
             new(DockCommandOutcome.Unsupported, "not-invoked-in-test");
 
+        public DockCommandResult LaunchExecutable(string executablePath) =>
+            new(DockCommandOutcome.Unsupported, "not-invoked-in-test");
+
         public DockCommandResult OpenPath(string path) =>
             new(DockCommandOutcome.Unsupported, "not-invoked-in-test");
 

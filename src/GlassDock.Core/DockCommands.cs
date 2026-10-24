@@ -14,7 +14,8 @@ public enum DockCommandOutcome
     Unsupported = 3,
     AccessDenied = 4,
     ForegroundActivationDenied = 5,
-    Failed = 6
+    Failed = 6,
+    BlockedByPolicy = 7
 }
 
 /// <summary>
