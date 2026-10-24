@@ -20,10 +20,11 @@ public partial class DockWindow : Window
 {
     private const double IconSize = 48;
     private readonly DockApplicationSession _session;
+    private readonly DockIconResolver _iconResolver;
     private readonly string _loadDiagnostic;
     private readonly ExperimentalDockDiagnostics? _diagnostics;
     private readonly Stopwatch _startupTimer;
-    private readonly Dictionary<DockTargetIdentity, ImageSource?> _iconCache = [];
+    private readonly Dictionary<DockItemId, ImageSource?> _iconCache = [];
     private CancellationTokenSource? _catalogLoadCancellation;
     private CancellationTokenSource? _iconLoadCancellation;
     private bool _vertical;
@@ -32,13 +33,15 @@ public partial class DockWindow : Window
         DockApplicationSession session,
         string loadDiagnostic,
         ExperimentalDockDiagnostics? diagnostics,
-        Stopwatch startupTimer)
+        Stopwatch startupTimer,
+        DockIconResolver iconResolver)
     {
         InitializeComponent();
         _session = session ?? throw new ArgumentNullException(nameof(session));
         _loadDiagnostic = loadDiagnostic;
         _diagnostics = diagnostics;
         _startupTimer = startupTimer ?? throw new ArgumentNullException(nameof(startupTimer));
+        _iconResolver = iconResolver ?? throw new ArgumentNullException(nameof(iconResolver));
         ExecutionModeLabel.Text = session.ExecutionMode == DockExecutionMode.PreviewOnly
             ? "PREVIEW ONLY · APP COMMANDS BLOCKED"
             : "SHELL COMMANDS ENABLED · EXPERIMENTAL";
@@ -286,8 +289,8 @@ public partial class DockWindow : Window
             Width = IconSize,
             Height = IconSize,
             Stretch = Stretch.Uniform,
-            Source = _iconCache.GetValueOrDefault(item.TargetIdentity),
-            Visibility = _iconCache.GetValueOrDefault(item.TargetIdentity) is null ? Visibility.Collapsed : Visibility.Visible
+            Source = _iconCache.GetValueOrDefault(item.Id),
+            Visibility = _iconCache.GetValueOrDefault(item.Id) is null ? Visibility.Collapsed : Visibility.Visible
         };
         var fallback = new TextBlock
         {
@@ -302,9 +305,7 @@ public partial class DockWindow : Window
         var iconGrid = new Grid
         {
             Width = IconSize + 8,
-            Height = IconSize + 8,
-            Background = new SolidColorBrush(Color.FromArgb(38, 255, 255, 255)),
-            ClipToBounds = true
+            Height = IconSize + 8
         };
         iconGrid.Children.Add(image);
         iconGrid.Children.Add(fallback);
@@ -364,7 +365,7 @@ public partial class DockWindow : Window
         var items = _session.State.PinnedApplications
             .Concat(_session.State.VisibleRecentApplications)
             .Concat(_session.State.FilesAndFolders)
-            .Where(item => !_iconCache.ContainsKey(item.TargetIdentity))
+            .Where(item => !_iconCache.ContainsKey(item.Id))
             .ToArray();
 
         var timer = Stopwatch.StartNew();
@@ -377,12 +378,24 @@ public partial class DockWindow : Window
                     return;
                 try
                 {
-                    var result = await _session.ResolveIconAsync(item.TargetIdentity, token);
+                    var result = await _iconResolver.ResolveAsync(item, GetIconTheme(), token);
                     if (token.IsCancellationRequested || !IsLoaded)
                         return;
-                    _iconCache[item.TargetIdentity] = result.Status == DockApplicationIconStatus.Found && result.Asset is not null
-                        ? DecodePng(result.Asset.Png)
-                        : null;
+                    ImageSource? image = null;
+                    if (result.Status == DockApplicationIconStatus.Found && result.Asset is not null)
+                    {
+                        try
+                        {
+                            image = DecodeIconAsset(result.Asset);
+                        }
+                        catch (Exception) when (result.Source != DockIconResolutionSource.WindowsShell)
+                        {
+                            var fallback = await _iconResolver.ResolveWindowsShellFallbackAsync(item, token);
+                            if (fallback.Status == DockApplicationIconStatus.Found && fallback.Asset is not null)
+                                image = DecodeIconAsset(fallback.Asset);
+                        }
+                    }
+                    _iconCache[item.Id] = image;
                 }
                 catch (OperationCanceledException)
                 {
@@ -390,7 +403,7 @@ public partial class DockWindow : Window
                 }
                 catch (Exception)
                 {
-                    _iconCache[item.TargetIdentity] = null;
+                    _iconCache[item.Id] = null;
                 }
                 processed++;
             }
@@ -534,19 +547,34 @@ public partial class DockWindow : Window
         return -1;
     }
 
-    private static ImageSource DecodePng(ReadOnlyMemory<byte> png)
+    private DockIconTheme GetIconTheme() => _session.State.Preferences.Appearance switch
     {
-        using var stream = new MemoryStream(png.ToArray(), writable: false);
-        var bitmap = new BitmapImage();
-        bitmap.BeginInit();
-        bitmap.CacheOption = BitmapCacheOption.OnLoad;
-        bitmap.CreateOptions = BitmapCreateOptions.PreservePixelFormat;
-        bitmap.DecodePixelWidth = 128;
-        bitmap.DecodePixelHeight = 128;
-        bitmap.StreamSource = stream;
-        bitmap.EndInit();
-        bitmap.Freeze();
-        return bitmap;
+        DockAppearancePreference.Light => DockIconTheme.Light,
+        DockAppearancePreference.Dark => DockIconTheme.Dark,
+        _ => DockIconTheme.Any
+    };
+
+    private ImageSource DecodeIconAsset(DockIconAsset asset)
+    {
+        using var stream = new MemoryStream(asset.EncodedBytes.ToArray(), writable: false);
+        BitmapDecoder decoder = asset.Format switch
+        {
+            DockIconFormat.Png => new PngBitmapDecoder(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad),
+            DockIconFormat.Ico => new IconBitmapDecoder(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad),
+            _ => throw new ArgumentOutOfRangeException(nameof(asset))
+        };
+        if (decoder.Frames.Count == 0)
+            throw new InvalidDataException("Icon decoder returned no frames.");
+
+        var dpi = VisualTreeHelper.GetDpi(this);
+        var targetPixels = (int)Math.Ceiling(IconSize * Math.Max(dpi.DpiScaleX, dpi.DpiScaleY));
+        var frame = decoder.Frames
+            .OrderBy(candidate => Math.Max(candidate.PixelWidth, candidate.PixelHeight) >= targetPixels ? 0 : 1)
+            .ThenBy(candidate => Math.Abs(Math.Max(candidate.PixelWidth, candidate.PixelHeight) - targetPixels))
+            .ThenByDescending(candidate => Math.Max(candidate.PixelWidth, candidate.PixelHeight))
+            .First();
+        frame.Freeze();
+        return frame;
     }
 
     private static string MakeFallbackGlyph(string name)

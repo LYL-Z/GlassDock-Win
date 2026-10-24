@@ -1,4 +1,5 @@
 using GlassDock.Core;
+using GlassDock.App;
 using GlassDock.Persistence;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -218,6 +219,61 @@ public sealed class DockConfigurationFileStoreTests
         Assert.AreEqual(DockConfigurationStoreSaveStatus.AccessDenied, result.Status);
         Assert.AreEqual("AccessDenied", result.DiagnosticCode);
         Assert.AreEqual(0, Directory.GetFiles(_testDirectory).Length);
+    }
+
+    [TestMethod]
+    public async Task LocalIconManifestAndUserSuppliedAssetRoundTripInsideIsolatedProfile()
+    {
+        var store = new DockIconManifestFileStore(_testDirectory);
+        var missing = store.Load();
+        Assert.AreEqual(DockIconManifestLoadStatus.DefaultedMissing, missing.Status);
+
+        var target = DockTargetIdentity.Create(DockIdentityScheme.WindowsSystemRole, "windows.file-manager");
+        var manifest = new DockIconManifest(
+            roleAssignments: [new DockIconRoleAssignment(DockIconSelector.ForTarget(target), DockIconRole.Finder)],
+            mappings: [new DockIconMapping(DockIconSelector.ForRole(DockIconRole.Finder),
+            [new DockIconAssetVariant("assets/finder.png", sourceNote: "provided by user", redistributionStatus: DockIconRedistributionStatus.LocalUseOnly)])]);
+        Assert.IsTrue(store.Save(manifest).Succeeded);
+        Assert.AreEqual(DockIconManifestLoadStatus.Loaded, store.Load().Status);
+
+        var assetPath = Path.Combine(_testDirectory, DockIconManifestFileStore.AssetDirectoryName, "assets", "finder.png");
+        Directory.CreateDirectory(Path.GetDirectoryName(assetPath)!);
+        var png = ValidPng();
+        await File.WriteAllBytesAsync(assetPath, png);
+        var read = await store.ReadLocalAssetAsync("assets/finder.png");
+
+        Assert.AreEqual(DockIconAssetReadStatus.Found, read.Status);
+        Assert.AreEqual(DockIconFormat.Png, read.Asset!.Format);
+        CollectionAssert.AreEqual(png, read.Asset.EncodedBytes.ToArray());
+        Assert.AreEqual("windows.file-manager", store.Load().Manifest.RoleAssignments.Single().Selector.TargetIdentity!.Value.ComparisonKey);
+    }
+
+    [TestMethod]
+    public async Task CorruptIconManifestAndEscapingAssetPathRecoverWithoutReadingOutsideProfile()
+    {
+        var store = new DockIconManifestFileStore(_testDirectory);
+        var manifestPath = Path.Combine(_testDirectory, DockIconManifestFileStore.AssetDirectoryName, DockIconManifestFileStore.ManifestFileName);
+        Directory.CreateDirectory(Path.GetDirectoryName(manifestPath)!);
+        await File.WriteAllTextAsync(manifestPath, "{ broken manifest");
+
+        var load = store.Load();
+        var traversal = await store.ReadLocalAssetAsync("../outside.png");
+
+        Assert.AreEqual(DockIconManifestLoadStatus.RecoveredInvalid, load.Status);
+        Assert.AreEqual(0, load.Manifest.Mappings.Count);
+        Assert.AreEqual(DockIconAssetReadStatus.Invalid, traversal.Status);
+        Assert.IsFalse(File.Exists(Path.Combine(_testRoot, "outside.png")));
+    }
+
+    private static byte[] ValidPng()
+    {
+        var bytes = new byte[33];
+        new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }.CopyTo(bytes, 0);
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(bytes.AsSpan(8, 4), 13);
+        "IHDR"u8.CopyTo(bytes.AsSpan(12, 4));
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(bytes.AsSpan(16, 4), 1);
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(bytes.AsSpan(20, 4), 1);
+        return bytes;
     }
 
     [TestMethod]

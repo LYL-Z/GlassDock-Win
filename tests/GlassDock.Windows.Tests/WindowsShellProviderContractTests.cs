@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using GlassDock.App;
 using GlassDock.Core;
 using GlassDock.Windows.Shell;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -129,6 +130,40 @@ public sealed class WindowsShellProviderContractTests
         Assert.AreEqual("IconAccessDenied", denied.DiagnosticCode);
         Assert.ThrowsExactly<ArgumentException>(() =>
             WindowsShellIconResult.Unavailable(WindowsShellIconStatus.Failed));
+    }
+
+    [TestMethod]
+    public void DownloadsKnownFolderRecognitionUsesKnownFolderIdentityInsteadOfSynthesizingAPath()
+    {
+        var byName = DockTargetIdentity.Create(DockIdentityScheme.WindowsKnownFolderId, "Downloads", "FOLDERID_Downloads");
+        var byGuid = DockTargetIdentity.Create(
+            DockIdentityScheme.WindowsKnownFolderId,
+            "{374DE290-123F-4565-9164-39C4925E467B}",
+            "374de290-123f-4565-9164-39c4925e467b");
+        var unrelated = DockTargetIdentity.Create(DockIdentityScheme.WindowsKnownFolderId, "Documents", "FOLDERID_Documents");
+
+        Assert.IsTrue(WindowsKnownFolderPathProvider.IsDownloadsIdentity(byName));
+        Assert.IsTrue(WindowsKnownFolderPathProvider.IsDownloadsIdentity(byGuid));
+        Assert.IsFalse(WindowsKnownFolderPathProvider.IsDownloadsIdentity(unrelated));
+    }
+
+    [TestMethod]
+    public async Task RecycleBinStateMapsActualQueryCountsAndFailuresWithoutPretendingUnknownIsEmpty()
+    {
+        var empty = new WindowsDockIconVisualStateProvider(new FakeRecycleBinStatusQuery(new(true, 0)));
+        var full = new WindowsDockIconVisualStateProvider(new FakeRecycleBinStatusQuery(new(true, 3)));
+        var unknown = new WindowsDockIconVisualStateProvider(new FakeRecycleBinStatusQuery(new(false, 0, unchecked((int)0x80004005))));
+        var negative = new WindowsDockIconVisualStateProvider(new FakeRecycleBinStatusQuery(new(true, -1)));
+
+        Assert.AreEqual(DockIconVisualState.Empty, await empty.GetVisualStateAsync(DockIconRole.Trash));
+        Assert.AreEqual(DockIconVisualState.Full, await full.GetVisualStateAsync(DockIconRole.Trash));
+        Assert.AreEqual(DockIconVisualState.Unknown, await unknown.GetVisualStateAsync(DockIconRole.Trash));
+        Assert.AreEqual(DockIconVisualState.Unknown, await negative.GetVisualStateAsync(DockIconRole.Trash));
+    }
+
+    private sealed class FakeRecycleBinStatusQuery(WindowsRecycleBinStatusQueryResult result) : IWindowsRecycleBinStatusQuery
+    {
+        public WindowsRecycleBinStatusQueryResult QueryAllDrives() => result;
     }
 
     private static byte[] MinimalPngHeader(uint width, uint height)

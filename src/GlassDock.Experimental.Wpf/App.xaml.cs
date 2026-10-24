@@ -33,12 +33,28 @@ public partial class App : Application
                 PinnedOrderSha256 = ExperimentalDockDiagnostics.GetPinnedOrderSha256(loaded.State)
             });
 
+            var shellProvider = new WindowsShellProvider();
+            var iconManifestTimer = Stopwatch.StartNew();
+            var iconManifestStore = new DockIconManifestFileStore(options.ProfileDirectory);
+            var iconManifest = iconManifestStore.Load();
+            diagnostics?.Record("icon-manifest-loaded", iconManifestTimer.Elapsed, new
+            {
+                Status = iconManifest.Status.ToString(),
+                iconManifest.DiagnosticCode,
+                RoleAssignmentCount = iconManifest.Manifest.RoleAssignments.Count,
+                MappingCount = iconManifest.Manifest.Mappings.Count
+            });
             var session = new DockApplicationSession(
                 loaded.State,
                 store,
-                new WindowsShellProvider(),
+                shellProvider,
                 options.ExecutionMode);
-            var window = new DockWindow(session, loaded.DiagnosticCode ?? loaded.Status.ToString(), diagnostics, startupTimer);
+            var iconResolver = new DockIconResolver(
+                iconManifest.Manifest,
+                iconManifestStore,
+                shellProvider,
+                new WindowsDockIconVisualStateProvider());
+            var window = new DockWindow(session, loaded.DiagnosticCode ?? loaded.Status.ToString(), diagnostics, startupTimer, iconResolver);
             MainWindow = window;
             diagnostics?.Record("window-show-called", startupTimer.Elapsed);
             window.Show();
