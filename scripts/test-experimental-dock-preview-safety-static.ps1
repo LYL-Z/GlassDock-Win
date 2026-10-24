@@ -9,6 +9,18 @@ $parseErrors = $null
 if ($parseErrors.Count -gt 0) {
     throw "Preview test runner PowerShell parse failed: $($parseErrors.Message -join '; ')"
 }
+$preflightPath = Join-Path $PSScriptRoot 'preview-icon-asset-preflight.ps1'
+$preflightText = [IO.File]::ReadAllText($preflightPath)
+$preflightTokens = $null
+$preflightErrors = $null
+[void][System.Management.Automation.Language.Parser]::ParseFile($preflightPath, [ref]$preflightTokens, [ref]$preflightErrors)
+if ($preflightErrors.Count -gt 0) { throw "Shared preflight PowerShell parse failed: $($preflightErrors.Message -join '; ')" }
+$assetTestsPath = Join-Path $PSScriptRoot 'test-experimental-dock-preview-assets.ps1'
+$assetTestsText = [IO.File]::ReadAllText($assetTestsPath)
+$assetTestTokens = $null
+$assetTestErrors = $null
+[void][System.Management.Automation.Language.Parser]::ParseFile($assetTestsPath, [ref]$assetTestTokens, [ref]$assetTestErrors)
+if ($assetTestErrors.Count -gt 0) { throw "Preview asset regression test PowerShell parse failed: $($assetTestErrors.Message -join '; ')" }
 
 if ($runnerText -notmatch '\$requiredPhrase\s*=\s*''RUN GLASSDOCK PREVIEW TEST''') {
     throw 'The exact independent desktop-test authorization phrase is missing.'
@@ -23,9 +35,35 @@ if ($runnerText -notmatch "'--preview-native-role-icons'" -or
     $runnerText -notmatch '\$privateAssetDirectory' -or
     $runnerText -notmatch 'Copy-Item -LiteralPath \$privateManifest' -or
     $runnerText -notmatch 'Copy-Item -LiteralPath \(Join-Path \$privateAssetDirectory' -or
-    $runnerText -notmatch 'Get-FileHash -LiteralPath \$iconPath' -or
-    $runnerText -notmatch 'redistributionStatus -cne ''LocalUseOnly''') {
+    $preflightText -notmatch "redistributionStatus -cne 'LocalUseOnly'") {
     throw 'The runner must stage the user-provided local manifest and icon files into the unique evidence profile.'
+}
+if ($runnerText -notmatch 'Assert-PreviewAssetRootIsLocal' -or
+    $runnerText -notmatch 'Invoke-PreviewIconAssetPreflight' -or
+    $runnerText -notmatch '\[switch\]\$PreflightOnly' -or
+    $preflightText -notmatch "SemanticRole = 'Trash'; VisualState = 'Empty'; SourceRole = 'TrashEmpty'" -or
+    $preflightText -notmatch 'Get-FileHash -LiteralPath \$assetPath -Algorithm SHA256' -or
+    $preflightText -notmatch 'Get-PreviewPngCrc32' -or
+    $preflightText -notmatch 'HasAlphaChannel = \$hasAlphaChannel') {
+    throw 'The runner must use the shared full preflight, preserve SHA/PNG integrity checks, record alpha metadata, and map Trash+Empty to TrashEmpty.'
+}
+$preflightOnlyIndex = $runnerText.IndexOf('if ($PreflightOnly)', [StringComparison]::Ordinal)
+$preflightCallIndex = $runnerText.IndexOf('Invoke-PreviewIconAssetPreflight', [StringComparison]::Ordinal)
+$confirmationIndex = $runnerText.IndexOf('Confirm-M0InteractiveTest', [StringComparison]::Ordinal)
+$normalPreflightIndex = $runnerText.IndexOf('$preflightResult = @(Invoke-PreviewIconAssetPreflight', $confirmationIndex, [StringComparison]::Ordinal)
+$sessionStartIndex = $runnerText.IndexOf('Start-M0InteractiveTestSession', [StringComparison]::Ordinal)
+$runIdIndex = $runnerText.IndexOf('$runId = ', [StringComparison]::Ordinal)
+if ($preflightOnlyIndex -lt 0 -or $preflightCallIndex -lt $preflightOnlyIndex -or
+    $confirmationIndex -lt $preflightOnlyIndex -or $normalPreflightIndex -le $confirmationIndex -or
+    $sessionStartIndex -lt $normalPreflightIndex -or $runIdIndex -lt $normalPreflightIndex) {
+    throw 'The shared preflight must complete before evidence creation, watchdog/session startup, and Dock/WGC process launch; PreflightOnly must return before confirmation or desktop setup.'
+}
+if ($assetTestsText -notmatch 'Invoke-PreviewIconAssetPreflight' -or
+    $assetTestsText -notmatch 'run-experimental-dock-preview-test\.ps1' -or
+    $assetTestsText -notmatch 'Trash\+Empty->TrashEmpty' -or
+    $assetTestsText -notmatch 'no-alpha/no-transparency' -or
+    $assetTestsText -notmatch 'Get-DesktopTestProcessSnapshot') {
+    throw 'Asset regression tests must exercise the shared validator, actual runner PreflightOnly path, role mapping, PNG alpha metadata, and no-launch process boundary.'
 }
 if ($runnerText -match "'--enable-shell-commands'") { throw 'The PreviewOnly runner must never enable Shell commands.' }
 if ($runnerText -match '\b(SendInput|SendKeys|keybd_event|mouse_event|ChangeDisplaySettings|SetDisplayConfig|SetThreadDpiAwarenessContext)\s*\(') {
@@ -131,6 +169,7 @@ if (-not (Test-Path -LiteralPath $seedTestsPath -PathType Leaf)) {
 Write-Output 'PASS: PreviewOnly desktop test script parses and requires a fresh exact authorization phrase.'
 Write-Output 'PASS: Runner is bounded to 300 seconds, uses an independent watchdog, and only tracks run-owned processes.'
 Write-Output 'PASS: Runner requests PreviewOnly, uses window-only WGC, and has no input-injection or display-setting code.'
+Write-Output 'PASS: Actual runner and regression tests share one full role/state/source, hash, PNG-structure, and transparency preflight; dry run returns before desktop setup.'
 Write-Output 'PASS: Private user icons and manifest are staged only into a unique D: evidence profile; native roles require explicit PreviewOnly opt-in.'
 Write-Output 'PASS: Watchdog source registers Ctrl+Shift+F12, fails closed on registration failure, enforces timeout, and terminates manifest-owned processes only.'
 Write-Output 'PASS: Session blocks Shell commands before the provider; WPF has visible Exit, Alt+F4, cleanup, and drag-click suppression.'

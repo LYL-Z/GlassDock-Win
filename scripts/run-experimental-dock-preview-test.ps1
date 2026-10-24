@@ -1,10 +1,27 @@
 [CmdletBinding()]
 param(
     [switch]$ConfirmDesktopTest,
-    [string]$AuthorizationPhrase
+    [string]$AuthorizationPhrase,
+    [switch]$PreflightOnly,
+    [string]$AssetRoot
 )
 
 $ErrorActionPreference = 'Stop'
+$script:RepoRoot = Split-Path -Parent $PSScriptRoot
+$script:LocalRoot = Join-Path $script:RepoRoot '.local'
+. (Join-Path $PSScriptRoot 'preview-icon-asset-preflight.ps1')
+
+$privateIconRoot = Join-Path $script:LocalRoot 'experimental-dock\icon-assets'
+if ([string]::IsNullOrWhiteSpace($AssetRoot)) { $AssetRoot = $privateIconRoot }
+elseif (-not $PreflightOnly) { throw '-AssetRoot is available only with -PreflightOnly; desktop tests always use the private local icon set.' }
+$AssetRoot = Assert-PreviewAssetRootIsLocal -AssetRoot $AssetRoot -LocalRoot $script:LocalRoot
+
+if ($PreflightOnly) {
+    $preflightResult = @(Invoke-PreviewIconAssetPreflight -AssetRoot $AssetRoot)
+    $preflightResult | ConvertTo-Json -Depth 8 -Compress
+    return
+}
+
 . (Join-Path $PSScriptRoot 'common.ps1')
 . (Join-Path $PSScriptRoot 'interactive-test-safety.ps1')
 
@@ -28,47 +45,18 @@ if ($existing.Count -gt 0) {
     throw 'An experimental Dock process is already running. The test will not attach to or stop an existing process.'
 }
 
-$privateIconRoot = Join-Path $script:LocalRoot 'experimental-dock\icon-assets'
 $privateManifest = Join-Path $privateIconRoot 'manifest.json'
 $privateSourceRecord = Join-Path $privateIconRoot 'source-record.json'
 $privateAssetDirectory = Join-Path $privateIconRoot 'assets'
-$expectedMappings = @(
-    [pscustomobject]@{ Role='Finder'; File='finder.png'; State='Default' },
-    [pscustomobject]@{ Role='SystemSettings'; File='settings.png'; State='Default' },
-    [pscustomobject]@{ Role='Downloads'; File='downloads.png'; State='Default' },
-    [pscustomobject]@{ Role='Trash'; File='trash-empty.png'; State='Empty' }
-)
-if (-not (Test-Path -LiteralPath $privateManifest -PathType Leaf) -or
-    -not (Test-Path -LiteralPath $privateSourceRecord -PathType Leaf)) {
-    throw 'The private local icon manifest or source record is missing. No desktop window was started.'
-}
-$manifestModel = Get-Content -LiteralPath $privateManifest -Raw | ConvertFrom-Json -ErrorAction Stop
-$sourceRecord = @(Get-Content -LiteralPath $privateSourceRecord -Raw | ConvertFrom-Json -ErrorAction Stop)
-if ($manifestModel.schemaVersion -ne 1 -or @($manifestModel.mappings).Count -ne $expectedMappings.Count) {
-    throw 'The private icon manifest schema or role count is invalid. No desktop window was started.'
-}
-foreach ($expected in $expectedMappings) {
-    $matches = @($manifestModel.mappings | Where-Object { $_.selector.role -eq $expected.Role })
-    if ($matches.Count -ne 1 -or @($matches[0].variants).Count -ne 1) {
-        throw "The private icon manifest must have exactly one $($expected.Role) variant. No desktop window was started."
-    }
-    $variant = $matches[0].variants[0]
-    if ($variant.relativePath -cne "assets/$($expected.File)" -or
-        $variant.theme -cne 'Any' -or $variant.state -cne $expected.State -or
-        $variant.redistributionStatus -cne 'LocalUseOnly') {
-        throw "The $($expected.Role) mapping does not match its local-only role, file, theme, and state policy."
-    }
-
-    $iconPath = Join-Path $privateAssetDirectory $expected.File
-    if (-not (Test-Path -LiteralPath $iconPath -PathType Leaf)) {
-        throw "A user-provided local preview icon is missing: $($expected.File). No desktop window was started."
-    }
-    $records = @($sourceRecord | Where-Object { $_.File -ceq $expected.File -and $_.Role -ceq $expected.Role })
-    $actualHash = (Get-FileHash -LiteralPath $iconPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($records.Count -ne 1 -or $records[0].Sha256 -cne $actualHash) {
-        throw "The local $($expected.Role) image does not match its D: source record. No desktop window was started."
-    }
-}
+$preflightResult = @(Invoke-PreviewIconAssetPreflight -AssetRoot $privateIconRoot)
+$expectedMappings = @($preflightResult | ForEach-Object {
+    [pscustomobject]@{ Role = $_.SemanticRole; File = $_.File; State = $_.VisualState; SourceRole = $_.SourceRole }
+})
+Write-Output ('Preflight passed for role/state/source mappings: ' + (($preflightResult | ForEach-Object {
+    '{0}+{1}->{2}; PNG {3}x{4}, color type {5}, bit depth {6}, alpha={7}, transparency={8}' -f `
+        $_.SemanticRole, $_.VisualState, $_.SourceRole, $_.Png.Width, $_.Png.Height, $_.Png.ColorType, `
+        $_.Png.BitDepth, $_.Png.HasAlphaChannel, $_.Png.TransparencyDescription
+}) -join ' | '))
 
 $runId = [Guid]::NewGuid().ToString('N')
 $evidenceRoot = Join-Path $script:LocalRoot "evidence\experimental-preview\$runId"

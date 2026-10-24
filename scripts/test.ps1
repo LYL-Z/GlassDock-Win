@@ -8,6 +8,7 @@ $ErrorActionPreference = 'Stop'
 Push-Location $script:RepoRoot
 try {
     & (Join-Path $PSScriptRoot 'test-experimental-dock-preview-safety-static.ps1')
+    & (Join-Path $PSScriptRoot 'test-experimental-dock-preview-assets.ps1')
 
     if (-not $NoRestore) {
         & $script:DotnetExe restore 'GlassDock-Win.sln' --configfile 'NuGet.Config' --locked-mode
